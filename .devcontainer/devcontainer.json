@@ -1,0 +1,26 @@
+{
+    "name": "fast sam test",
+    "image": "fastsam-test:dev",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "..",
+        "args": {
+            "VARIANT": "3.12-bookworm"
+        }
+    },
+    "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash"
+    },
+    "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter"
+    ],
+    "remoteUser": "root",
+    "forwardPorts": [8050],
+    "workspaceFolder": "/app",
+    "mounts": [
+        "source=${localWorkspaceFolder}/,target=/app,type=bind,consistency=cached"
+    ],
+    "shutdownAction": "stopContainer"
+}
