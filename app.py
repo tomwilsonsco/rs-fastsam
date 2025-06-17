@@ -2,37 +2,196 @@ import streamlit as st
 from streamlit_folium import st_folium
 import folium
 from folium.plugins import Draw
-import rasterio
+import rasterio as rio
 from PIL import Image
-import os
+from pathlib import Path
+from shapely.geometry import box
+from rasterio.transform import xy
+from ultralytics import FastSAM
+import numpy as np
+import cv2
+from shapely.geometry import Polygon, mapping
+import geopandas as gpd
 from pyproj import Transformer
 
-clicked = st.button("Get pixel coordinates")
 
-# Load image and bounds
-tif_path = "rgb_fast_sam_test.tif"
-with rasterio.open(tif_path) as src:
-    img = src.read()  # shape: (3, H, W)
-    bounds = src.bounds
-    transform = src.transform
-    width = src.width
-    height = src.height
-    profile = src.profile
+TIF_PATH = "rgb_fast_sam_test.tif"
 
-# Save as temporary PNG if not already
-tmp_path = os.path.join("/tmp", "overlay.png")
-if not os.path.exists(tmp_path):
-    # Convert to (H, W, 3) and save
-    img_rgb = img.transpose(1, 2, 0)
-    Image.fromarray(img_rgb).save(tmp_path)
+if "initialized" not in st.session_state: 
+    st.session_state["show_segmentation"] = False
+    st.session_state["segmentation_done"] = False
+    st.session_state["initialized"] = True
+    st.session_state["out"] = {}
+    st.session_state["points"] = []
 
-# Define map and bounds
-image_bounds = [[56.00887809, -2.79804176], [56.03862098, -2.72650399]]
-center = [56.02437988, -2.76394275]
 
-# Build Folium map
-m = folium.Map(location=center, zoom_start=13)
-folium.raster_layers.ImageOverlay(tmp_path, bounds=image_bounds, opacity=1).add_to(m)
+def to_pixel_coordinates(coordinates, profile):
+    """Convert list of [lon, lat] coordinates to pixel coordinates.
+
+    For each [lon, lat] coordinate:
+    - Convert from EPSG:4326 (WGS84) to the image CRS (profile['crs']).
+    - Convert world coordinates to pixel coordinates using the inverted affine transform.
+    - Exclude any points that fall outside the image bounds defined by profile['width'] and profile['height'].
+
+    Returns a list of [col, row] pixel coordinates.
+    """
+    transformer = Transformer.from_crs("EPSG:4326", profile["crs"], always_xy=True)
+
+    if not coordinates:
+        return None
+
+    pixel_coords = []
+    for coord in coordinates:
+        lon, lat = coord[0], coord[1]
+        x, y = transformer.transform(lon, lat)
+        # Convert world coordinates (x, y) to pixel coordinates
+        col, row = ~profile["transform"] * (x, y)
+        col, row = int(round(col)), int(round(row))
+
+        # Check if the pixel lies within the image bounds
+        if 0 <= col < profile["width"] and 0 <= row < profile["height"]:
+            pixel_coords.append([col, row])
+
+    return pixel_coords
+
+
+@st.cache_data
+def create_png(tif_path):
+    with rio.open(tif_path) as src:
+        img = src.read()  # shape: (3, H, W)
+        profile = src.profile  # Get metadata
+        bounds = src.bounds  # Get bounds
+        # Project bounds to WGS84 (EPSG:4326) if needed
+
+    bbox = box(*src.bounds)
+
+    # Create a GeoDataFrame for reprojection
+    gdf_bbox = gpd.GeoDataFrame(geometry=[bbox], crs=src.crs)
+    bbox_wgs = gdf_bbox.to_crs("EPSG:4326").geometry.iloc[0]
+
+    # Extract bottom left and top right coordinates
+    minx, miny, maxx, maxy = bbox_wgs.bounds
+
+    # Calculate centroid of the bounds rectangle as (lat, lon)
+    lat_centroid = (miny + maxy) / 2
+    lon_centroid = (minx + maxx) / 2
+    centroid = [lat_centroid, lon_centroid]
+
+    # Convert to [[lat_min, lon_min], [lat_max, lon_max]]
+    image_bounds = [
+        [miny, minx],  # [lat_min, lon_min]
+        [maxy, maxx],  # [lat_max, lon_max]
+    ]
+
+    # Save as temporary PNG if not already
+    tmp_path = Path("/tmp/overlay.png")
+    if not tmp_path.exists():
+
+        img_rgb = img.transpose(1, 2, 0)
+        Image.fromarray(img_rgb).save(tmp_path)
+    return profile, image_bounds, centroid, tmp_path
+
+
+def create_segmentation_geojson(tif_path, profile, coords=None):
+    """
+    Run segmentation on the TIFF image, convert masks to polygon geometries,
+    and save them as a GeoJSON file.
+
+    Parameters:
+    tif_path (str): Path to the TIFF image.
+    output_geojson_path (str): Output path for the GeoJSON file.
+    coords (list, optional): Optional points for interactive segmentation.
+    """
+
+    # Load model and run inference
+    model = FastSAM("FastSAM-x.pt")
+    if coords is None:
+        results = model(
+            tif_path, device="cpu", retina_masks=True, imgsz=1024, conf=0.25, iou=0.5
+        )
+    else:
+        results = model(
+            tif_path,
+            points=coords,
+            device="cpu",
+            retina_masks=True,
+            imgsz=512,
+            conf=0.3,
+            iou=0.9,
+        )
+
+    res = results[0]
+    masks = res.masks.data.cpu().numpy()
+
+    transform = profile["transform"]
+    crs = profile["crs"]
+
+    polygons = []
+    for mask in masks:
+        mask_uint8 = (mask * 255).astype(np.uint8)
+        contours, _ = cv2.findContours(
+            mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        for cnt in contours:
+            if len(cnt) >= 3:  # Valid polygon
+                # Convert pixel (row, col) to geographic (x, y)
+                pixel_coords = cnt.squeeze()
+                if pixel_coords.ndim != 2:  # Skip degenerate contours
+                    continue
+
+                geo_coords = [
+                    xy(transform, y, x) for x, y in pixel_coords
+                ]  # Note x,y switch
+                polygon = Polygon(geo_coords)
+                if polygon.is_valid and not polygon.is_empty:
+                    polygons.append(polygon)
+
+    gdf = gpd.GeoDataFrame(geometry=polygons, crs=crs)
+
+    gdf = gdf[gdf.is_valid]
+
+    return gdf
+
+
+def create_map(center, zoom_val, img_path):
+    """
+    Create a folium map with initial settings and return it.
+    """
+
+    m = folium.Map(location=center, zoom_start=zoom_val)
+
+    folium.raster_layers.ImageOverlay(
+        str(img_path), bounds=image_bounds, opacity=1, name="RGB image"
+    ).add_to(m)
+
+    return m
+
+
+def trigger_segmentation():
+    st.session_state["show_segmentation"] = True
+    st.session_state["segmentation_done"] = False
+
+
+def clear_segmentation():
+    st.session_state["show_segmentation"] = False
+    st.session_state["segmentation_done"] = False
+    st.session_state["gdf"] = None
+
+
+
+def delete_points():
+    st.session_state["points"] = []
+
+
+profile, image_bounds, centroid, tmp_path = create_png(TIF_PATH)
+
+if "center" not in st.session_state:
+    st.session_state["center"] = centroid
+if "zoom" not in st.session_state:
+    st.session_state["zoom"] = 13
+
+m = create_map(st.session_state["center"], st.session_state["zoom"], tmp_path)
+
 
 draw = Draw(
     draw_options={
@@ -41,21 +200,83 @@ draw = Draw(
         "circle": False,
         "rectangle": False,
         "circlemarker": False,
-        "marker": True  # Enable only point (marker)
+        "marker": True,  # Enable only point (marker)
     },
-    edit_options={"edit": True}
+    edit_options={"edit": False, "remove": False},
 )
 draw.add_to(m)
 
-# Streamlit app
-st.title("Draw points on the image")
+#print(st.session_state["points"])
+
+fg = folium.FeatureGroup(name="Markers")
+
+if "out" in st.session_state:
+    if "all_drawings" in st.session_state["out"]:
+        points = st.session_state["out"]["all_drawings"]
+
+if st.session_state["points"]:
+    for point in st.session_state["points"]:
+        fg.add_child(
+            folium.Marker(
+                location=[point[1], point[0]],
+            )
+        )
+
+st.button("FastSAM Segmentation", on_click=trigger_segmentation)
+st.button("Clear Segmentation", on_click=clear_segmentation)
+
+if st.session_state["show_segmentation"] and not st.session_state["segmentation_done"]:
+    points_use = st.session_state["points"]
+    pixel_coords = to_pixel_coordinates(points_use, profile)
+    gdf = create_segmentation_geojson(TIF_PATH, profile, pixel_coords)
+    st.session_state["gdf"] = gdf
+    st.session_state["segmentation_done"] = True
+
+    new_center = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
+
+    st.session_state["center"] = new_center
+    st.session_state["zoom"] = st.session_state["out"]["zoom"]
+
+if st.session_state["show_segmentation"]:
+    # Add segmentation polygons to the map
+    folium.GeoJson(
+        st.session_state["gdf"],
+        name="Segmentation Polygons",
+        color="red",
+        fill=False,
+    ).add_to(m)
 
 
-output = st_folium(m, width=700, height=500, pixelated=True)
+folium.LayerControl().add_to(m)
 
-with st.sidebar:
-    st.header("Captured Points")
-    if clicked:
-        points = output.get("all_drawings")
-        coords = [p["geometry"]["coordinates"] for p in points]
-        st.write(coords)
+delete_points = st.button("Delete Points")
+if delete_points:
+    st.session_state["points"] = []
+
+    new_center = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
+
+    m = create_map(new_center, st.session_state["out"]["zoom"], tmp_path)
+
+    st.session_state["center"] = new_center
+    st.session_state["zoom"] = st.session_state["out"]["zoom"]
+
+out = st_folium(
+    m,
+    center=st.session_state["center"],
+    zoom=st.session_state["zoom"],
+    feature_group_to_add=fg,
+    key="out",
+    height=400,
+    width=700,
+)
+
+current_points = out["all_drawings"]
+stored_points = st.session_state["points"]
+
+print("current", current_points)
+print("stored", stored_points)
+if current_points:
+    new_points = [p["geometry"]["coordinates"] for p in current_points] + stored_points
+    new_points = list(set(tuple(pt) for pt in new_points))
+    new_points = [list(pt) for pt in new_points]
+    st.session_state["points"] = new_points
