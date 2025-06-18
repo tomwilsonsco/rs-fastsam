@@ -1,9 +1,23 @@
 [server]
 fileWatcherType = "none"
+enableStaticServing = true
+
+[[theme.fontFaces]]
+family = "Roboto"
+url = "app/static/Roboto-Regular.ttf"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Roboto"
+url = "app/static/Roboto-Bold.ttf"
+weight = 700
+style = "normal"
+
 [theme]
+font="Roboto"
 base="dark"
 primaryColor="#1E88E5" 
 backgroundColor="#0E1117"          
 secondaryBackgroundColor="#262730" 
-textColor="#FAFAFA" 
-font="monospace"
+textColor="#FAFAFA"
