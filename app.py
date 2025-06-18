@@ -23,7 +23,7 @@ st.set_page_config(
 st.markdown("""
         <style>
                .block-container {
-                    padding-top: 0.7rem;
+                    padding-top: 1rem;
                     padding-bottom: 0rem;
                     padding-left: 5rem;
                     padding-right: 5rem;
@@ -51,6 +51,7 @@ if "initialized" not in st.session_state:
     st.session_state["initialized"] = True
     st.session_state["out"] = {}
     st.session_state["points"] = []
+    st.session_state["map"] = None
 
 
 def to_pixel_coordinates(coordinates, profile):
@@ -208,8 +209,13 @@ def clear_segmentation():
 
 
 def delete_points():
+    if "center" in st.session_state["out"]:
+        new_center = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
+        st.session_state["center"] = new_center
+        st.session_state["zoom"] = st.session_state["out"]["zoom"]
     st.session_state["points"] = []
-
+    st.session_state["map_key"] += 1
+    
 
 profile, image_bounds, centroid, tmp_path = create_png(TIF_PATH)
 
@@ -217,6 +223,9 @@ if "center" not in st.session_state:
     st.session_state["center"] = centroid
 if "zoom" not in st.session_state:
     st.session_state["zoom"] = 13
+
+if "map_key" not in st.session_state:
+    st.session_state["map_key"] = 0
 
 m = create_map(st.session_state["center"], st.session_state["zoom"], tmp_path)
 
@@ -233,7 +242,6 @@ draw = Draw(
     edit_options={"edit": False, "remove": False},
 )
 draw.add_to(m)
-
 
 fg = folium.FeatureGroup(name="Markers")
 
@@ -264,10 +272,10 @@ if st.session_state["show_segmentation"] and not st.session_state["segmentation_
     st.session_state["gdf"] = gdf
     st.session_state["segmentation_done"] = True
 
-    new_center = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
-
-    st.session_state["center"] = new_center
-    st.session_state["zoom"] = st.session_state["out"]["zoom"]
+    if "center" in st.session_state["out"]:
+        new_center = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
+        st.session_state["center"] = new_center
+        st.session_state["zoom"] = st.session_state["out"]["zoom"]
 
 if st.session_state["show_segmentation"]:
     # Add segmentation polygons to the map
@@ -286,10 +294,12 @@ out = st_folium(
     center=st.session_state["center"],
     zoom=st.session_state["zoom"],
     feature_group_to_add=fg,
-    key="out",
+    key=f"out_{st.session_state["map_key"]}",
     height=600,
     width=900,
 )
+
+st.session_state["out"] = out 
 
 current_points = out["all_drawings"]
 stored_points = st.session_state["points"]
