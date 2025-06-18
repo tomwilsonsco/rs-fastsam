@@ -219,7 +219,6 @@ def create_map(center, zoom_val, img_path):
 
     return m
 
-
 def trigger_segmentation(model_name):
     st.session_state["show_segmentation"] = True
     st.session_state["segmentation_done"] = False
@@ -284,18 +283,29 @@ if st.session_state["points"]:
             )
         )
 
+def download_polys(gdf):
+    return gdf.to_file("preds.geojson", driver="GeoJSON")
+
 with st.sidebar:
     st.header("Controls")
-    st.button("FastSAM", on_click=trigger_segmentation, args=("FastSAM",))
-    st.button("MobileSAM", on_click=trigger_segmentation, args=("MobileSAM",))
-    st.button("Delete Points", on_click=delete_points)
-    st.button("Delete Predictions", on_click=clear_segmentation)
-    # st.download_button("Download GeoJSON", data=st.session_state.get("gdf").to_json(), file_name="segs.geojson")
+    st.button("FastSAM", on_click=trigger_segmentation, args=("FastSAM",), help="Run FastSAM segmentation.")
+    st.button("MobileSAM", on_click=trigger_segmentation, args=("MobileSAM",), help="Run MobileSAM segmentation.")
+    st.button("Delete Points", on_click=delete_points, help="Delete all points you have drawn.")
+    st.button("Delete Predictions", on_click=clear_segmentation, help="Clear segmentation prediction polygons.")
+    if st.session_state.get("gdf") is not None:
+        geojson_str = st.session_state["gdf"].to_json()
+        st.sidebar.download_button(
+            "Download GeoJSON",
+            data=geojson_str,
+            file_name="seg_preds.geojson",
+            mime="application/geo+json"
+        )
 
 if st.session_state["show_segmentation"] and not st.session_state["segmentation_done"]:
     points_use = st.session_state["points"]
     pixel_coords = to_pixel_coordinates(points_use, profile)
     gdf = create_segmentation_geojson(TIF_PATH, profile, pixel_coords, st.session_state["model_name"])
+    geosjon_file = download_polys(gdf)
     st.session_state["gdf"] = gdf
     st.session_state["segmentation_done"] = True
 
