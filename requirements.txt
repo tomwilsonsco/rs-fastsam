@@ -1,0 +1,11 @@
+streamlit
+streamlit-folium
+folium
+rasterio
+Pillow
+shapely
+ultralytics
+numpy
+opencv-python
+geopandas
+pyproj
