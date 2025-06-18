@@ -15,7 +15,7 @@ import geopandas as gpd
 from pyproj import Transformer
 
 
-TIF_PATH = "rgb_fast_sam_test.tif"
+TIF_PATH = Path("data") / "rgb_fast_sam_test.tif"
 
 if "initialized" not in st.session_state: 
     st.session_state["show_segmentation"] = False
@@ -206,7 +206,6 @@ draw = Draw(
 )
 draw.add_to(m)
 
-#print(st.session_state["points"])
 
 fg = folium.FeatureGroup(name="Markers")
 
@@ -273,8 +272,6 @@ out = st_folium(
 current_points = out["all_drawings"]
 stored_points = st.session_state["points"]
 
-print("current", current_points)
-print("stored", stored_points)
 if current_points:
     new_points = [p["geometry"]["coordinates"] for p in current_points] + stored_points
     new_points = list(set(tuple(pt) for pt in new_points))
