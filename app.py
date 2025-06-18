@@ -7,7 +7,7 @@ from PIL import Image
 from pathlib import Path
 from shapely.geometry import box
 from rasterio.transform import xy
-from ultralytics import FastSAM
+from ultralytics import FastSAM, SAM
 import numpy as np
 import cv2
 from shapely.geometry import Polygon, mapping
@@ -20,7 +20,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-st.markdown("""
+st.markdown(
+    """
         <style>
                .block-container {
                     padding-top: 1rem;
@@ -29,23 +30,27 @@ st.markdown("""
                     padding-right: 5rem;
                 }
         </style>
-        """, unsafe_allow_html=True)
+        """,
+    unsafe_allow_html=True,
+)
 
 st.title("Satellite Image Segmentation")
 
 with st.expander("❓ How to use"):
-    st.markdown("""
+    st.markdown(
+        """
     1. Click on the map to place one or more points.  
     2. Choose **FastSAM** or **MobileSAM** from the sidebar.  
     3. Wait for the segmentation overlay.  
     4. (Optional) Download the GeoJSON.  
     5. Delete points or predictions as needed.
-    """)
+    """
+    )
 
 
 TIF_PATH = Path("data") / "rgb_fast_sam_test.tif"
 
-if "initialized" not in st.session_state: 
+if "initialized" not in st.session_state:
     st.session_state["show_segmentation"] = False
     st.session_state["segmentation_done"] = False
     st.session_state["initialized"] = True
@@ -121,7 +126,7 @@ def create_png(tif_path):
     return profile, image_bounds, centroid, tmp_path
 
 
-def create_segmentation_geojson(tif_path, profile, coords=None):
+def create_segmentation_geojson(tif_path, profile, coords=None, use_model="FastSAM"):
     """
     Run segmentation on the TIFF image, convert masks to polygon geometries,
     and save them as a GeoJSON file.
@@ -133,21 +138,40 @@ def create_segmentation_geojson(tif_path, profile, coords=None):
     """
 
     # Load model and run inference
-    model = FastSAM("FastSAM-x.pt")
-    if coords is None:
-        results = model(
-            tif_path, device="cpu", retina_masks=True, imgsz=1024, conf=0.25, iou=0.5
-        )
-    else:
-        results = model(
-            tif_path,
-            points=coords,
-            device="cpu",
-            retina_masks=True,
-            imgsz=512,
-            conf=0.3,
-            iou=0.9,
-        )
+    if use_model == "FastSAM":
+        model = FastSAM("FastSAM-x.pt")
+        if coords is None:
+            results = model(
+                tif_path,
+                device="cpu",
+                retina_masks=True,
+                imgsz=1024,
+                conf=0.25,
+                iou=0.5,
+            )
+        else:
+            results = model(
+                tif_path,
+                points=coords,
+                device="cpu",
+                retina_masks=True,
+                imgsz=512,
+                conf=0.3,
+                iou=0.9,
+            )
+    if use_model == "MobileSAM":
+        model = SAM("mobile_sam.pt")
+        if coords is None:
+            results = model(
+                tif_path,
+                device="cpu",
+            )
+        else:
+            results = model(
+                tif_path,
+                points=coords,
+                device="cpu",
+            )
 
     res = results[0]
     masks = res.masks.data.cpu().numpy()
@@ -196,9 +220,10 @@ def create_map(center, zoom_val, img_path):
     return m
 
 
-def trigger_segmentation():
+def trigger_segmentation(model_name):
     st.session_state["show_segmentation"] = True
     st.session_state["segmentation_done"] = False
+    st.session_state["model_name"] = model_name
 
 
 def clear_segmentation():
@@ -207,15 +232,17 @@ def clear_segmentation():
     st.session_state["gdf"] = None
 
 
-
 def delete_points():
     if "center" in st.session_state["out"]:
-        new_center = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
+        new_center = [
+            st.session_state["out"]["center"]["lat"],
+            st.session_state["out"]["center"]["lng"],
+        ]
         st.session_state["center"] = new_center
         st.session_state["zoom"] = st.session_state["out"]["zoom"]
     st.session_state["points"] = []
     st.session_state["map_key"] += 1
-    
+
 
 profile, image_bounds, centroid, tmp_path = create_png(TIF_PATH)
 
@@ -259,21 +286,24 @@ if st.session_state["points"]:
 
 with st.sidebar:
     st.header("Controls")
-    st.button("FastSAM", on_click=trigger_segmentation, key="fast_sam")
-    st.button("MobileSAM", on_click=trigger_segmentation, key="mobile_sam")
+    st.button("FastSAM", on_click=trigger_segmentation, args=("FastSAM",))
+    st.button("MobileSAM", on_click=trigger_segmentation, args=("MobileSAM",))
     st.button("Delete Points", on_click=delete_points)
     st.button("Delete Predictions", on_click=clear_segmentation)
-    #st.download_button("Download GeoJSON", data=st.session_state.get("gdf").to_json(), file_name="segs.geojson")
+    # st.download_button("Download GeoJSON", data=st.session_state.get("gdf").to_json(), file_name="segs.geojson")
 
 if st.session_state["show_segmentation"] and not st.session_state["segmentation_done"]:
     points_use = st.session_state["points"]
     pixel_coords = to_pixel_coordinates(points_use, profile)
-    gdf = create_segmentation_geojson(TIF_PATH, profile, pixel_coords)
+    gdf = create_segmentation_geojson(TIF_PATH, profile, pixel_coords, st.session_state["model_name"])
     st.session_state["gdf"] = gdf
     st.session_state["segmentation_done"] = True
 
     if "center" in st.session_state["out"]:
-        new_center = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
+        new_center = [
+            st.session_state["out"]["center"]["lat"],
+            st.session_state["out"]["center"]["lng"],
+        ]
         st.session_state["center"] = new_center
         st.session_state["zoom"] = st.session_state["out"]["zoom"]
 
@@ -299,7 +329,7 @@ out = st_folium(
     width=900,
 )
 
-st.session_state["out"] = out 
+st.session_state["out"] = out
 
 current_points = out["all_drawings"]
 stored_points = st.session_state["points"]
