@@ -14,6 +14,34 @@ from shapely.geometry import Polygon, mapping
 import geopandas as gpd
 from pyproj import Transformer
 
+# → Page config
+st.set_page_config(
+    page_title="🛰️ Satellite Image Segmentation",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+st.markdown("""
+        <style>
+               .block-container {
+                    padding-top: 0.7rem;
+                    padding-bottom: 0rem;
+                    padding-left: 5rem;
+                    padding-right: 5rem;
+                }
+        </style>
+        """, unsafe_allow_html=True)
+
+st.title("Satellite Image Segmentation")
+
+with st.expander("❓ How to use"):
+    st.markdown("""
+    1. Click on the map to place one or more points.  
+    2. Choose **FastSAM** or **MobileSAM** from the sidebar.  
+    3. Wait for the segmentation overlay.  
+    4. (Optional) Download the GeoJSON.  
+    5. Delete points or predictions as needed.
+    """)
+
 
 TIF_PATH = Path("data") / "rgb_fast_sam_test.tif"
 
@@ -221,8 +249,13 @@ if st.session_state["points"]:
             )
         )
 
-st.button("FastSAM Segmentation", on_click=trigger_segmentation)
-st.button("Clear Segmentation", on_click=clear_segmentation)
+with st.sidebar:
+    st.header("Controls")
+    st.button("FastSAM", on_click=trigger_segmentation, key="fast_sam")
+    st.button("MobileSAM", on_click=trigger_segmentation, key="mobile_sam")
+    st.button("Delete Points", on_click=delete_points)
+    st.button("Delete Predictions", on_click=clear_segmentation)
+    #st.download_button("Download GeoJSON", data=st.session_state.get("gdf").to_json(), file_name="segs.geojson")
 
 if st.session_state["show_segmentation"] and not st.session_state["segmentation_done"]:
     points_use = st.session_state["points"]
@@ -248,25 +281,14 @@ if st.session_state["show_segmentation"]:
 
 folium.LayerControl().add_to(m)
 
-delete_points = st.button("Delete Points")
-if delete_points:
-    st.session_state["points"] = []
-
-    new_center = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
-
-    m = create_map(new_center, st.session_state["out"]["zoom"], tmp_path)
-
-    st.session_state["center"] = new_center
-    st.session_state["zoom"] = st.session_state["out"]["zoom"]
-
 out = st_folium(
     m,
     center=st.session_state["center"],
     zoom=st.session_state["zoom"],
     feature_group_to_add=fg,
     key="out",
-    height=400,
-    width=700,
+    height=600,
+    width=900,
 )
 
 current_points = out["all_drawings"]
