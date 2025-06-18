@@ -6,6 +6,6 @@ Pillow
 shapely
 ultralytics
 numpy
-opencv-python
+opencv-python-headless
 geopandas
 pyproj
