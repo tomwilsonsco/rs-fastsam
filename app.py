@@ -27,7 +27,7 @@ st.title("Satellite Image Segmentation")
 
 with st.expander("❓ How to use"):
     st.markdown(
-    """
+        """
     1. Use the draw marker icon (top left of the map) to place points on image features you wish to segment.  
     OR Zoom in on the image to the extent you wish to segment.
     2. Choose **FastSAM** or **MobileSAM** from the sidebar.  
@@ -116,7 +116,9 @@ def create_png(tif_path):
     return profile, image_bounds, centroid, tmp_path
 
 
-def create_segmentation_geojson(tif_path, profile, coords=None, use_model="FastSAM"):
+def create_segmentation_geojson(
+    tif_path, profile, coords=None, use_model="FastSAM", imgsz=1024, conf=0.2, iou=0.5
+):
     """
     Run segmentation on the TIFF image, convert masks to polygon geometries,
     and save them as a GeoJSON file.
@@ -130,44 +132,34 @@ def create_segmentation_geojson(tif_path, profile, coords=None, use_model="FastS
     # Load model and run inference
     if use_model == "FastSAM":
         model = FastSAM("FastSAM-x.pt")
-        if coords is None:
-            results = model(
-                tif_path,
-                device="cpu",
-                retina_masks=True,
-                imgsz=1024,
-                conf=0.25,
-                iou=0.5,
-            )
-        else:
-            results = model(
-                tif_path,
-                points=coords,
-                device="cpu",
-                retina_masks=True,
-                imgsz=1024,
-                conf=0.3,
-                iou=0.9,
-            )
-    if use_model == "MobileSAM":
+    elif use_model == "MobileSAM":
         model = SAM("mobile_sam.pt")
-        if coords is None:
-            results = model(
-                tif_path,
-                device="cpu",
-                imgsz=1024,
-                conf=0.3,
-                iou=0.9,
-            )
-        else:
-            results = model(
-                tif_path,
-                points=coords,
-                device="cpu",
-                imgsz=1024,
-                conf=0.3,
-                iou=0.9,
-            )
+    elif use_model == "SAM2-t":
+        model = SAM("sam2_t.pt")
+    else:
+        raise ValueError(
+            f"Invalid model name: {use_model}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
+        )
+
+    if coords is None:
+        results = model(
+            tif_path,
+            device="cpu",
+            retina_masks=True,
+            imgsz=imgsz,
+            conf=conf,
+            iou=iou,
+        )
+    else:
+        results = model(
+            tif_path,
+            points=coords,
+            device="cpu",
+            retina_masks=True,
+            imgsz=imgsz,
+            conf=conf,
+            iou=iou,
+        )
 
     res = results[0]
     masks = res.masks.data.cpu().numpy()
@@ -214,6 +206,7 @@ def create_map(center, zoom_val, img_path):
     ).add_to(m)
 
     return m
+
 
 def trigger_segmentation(model_name):
     st.session_state["show_segmentation"] = True
@@ -279,29 +272,53 @@ if st.session_state["points"]:
             )
         )
 
+
 def download_polys(gdf):
     return gdf.to_file("preds.geojson", driver="GeoJSON")
 
+
 with st.sidebar:
     st.header("Controls")
-    st.button("FastSAM", on_click=trigger_segmentation, args=("FastSAM",), help="Run FastSAM segmentation.")
-    st.button("MobileSAM", on_click=trigger_segmentation, args=("MobileSAM",), help="Run MobileSAM segmentation.")
-    st.button("Delete Points", on_click=delete_points, help="Delete all points you have drawn.")
-    st.button("Delete Predictions", on_click=clear_segmentation, help="Clear segmentation prediction polygons.")
+    st.button(
+        "FastSAM",
+        on_click=trigger_segmentation,
+        args=("FastSAM",),
+        help="Run FastSAM segmentation.",
+    )
+    st.button(
+        "MobileSAM",
+        on_click=trigger_segmentation,
+        args=("MobileSAM",),
+        help="Run MobileSAM segmentation.",
+    )
+    st.button(
+        "Delete Points",
+        on_click=delete_points,
+        help="Delete all points you have drawn.",
+    )
+    st.button(
+        "Delete Predictions",
+        on_click=clear_segmentation,
+        help="Clear segmentation prediction polygons.",
+    )
     if st.session_state.get("gdf") is not None:
         geojson_str = st.session_state["gdf"].to_json()
         st.sidebar.download_button(
             "Download predictions",
             data=geojson_str,
             file_name="seg_preds.geojson",
-            mime="application/geo+json"
+            mime="application/geo+json",
         )
 
 if st.session_state["show_segmentation"] and not st.session_state["segmentation_done"]:
     points_use = st.session_state["points"]
     pixel_coords = to_pixel_coordinates(points_use, profile)
-    with st.spinner(f"Generating {st.session_state["model_name"]} predictions...", show_time=True):
-        gdf = create_segmentation_geojson(TIF_PATH, profile, pixel_coords, st.session_state["model_name"])
+    with st.spinner(
+        f"Generating {st.session_state["model_name"]} predictions...", show_time=True
+    ):
+        gdf = create_segmentation_geojson(
+            TIF_PATH, profile, pixel_coords, st.session_state["model_name"]
+        )
     geosjon_file = download_polys(gdf)
     st.session_state["gdf"] = gdf
     st.session_state["segmentation_done"] = True
