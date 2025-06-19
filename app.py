@@ -29,7 +29,7 @@ with st.expander("❓ How to use"):
     st.markdown(
         """
     1. Use the draw marker icon (top left of the map) to place points on image features you wish to segment.  
-    OR Zoom in on the image to the extent you wish to segment.
+    **Alternatively**, Zoom in on the image to the extent you wish to segment.
     2. Choose **FastSAM** or **MobileSAM** from the sidebar.  
     3. Wait for the segmentation predictions to draw.  
     4. (Optional) Download the predictions as a GeoJSON file.  
@@ -208,10 +208,9 @@ def create_map(center, zoom_val, img_path):
     return m
 
 
-def trigger_segmentation(model_name):
+def trigger_segmentation():
     st.session_state["show_segmentation"] = True
     st.session_state["segmentation_done"] = False
-    st.session_state["model_name"] = model_name
 
 
 def clear_segmentation():
@@ -279,17 +278,16 @@ def download_polys(gdf):
 
 with st.sidebar:
     st.header("Controls")
-    st.button(
-        "FastSAM",
-        on_click=trigger_segmentation,
-        args=("FastSAM",),
-        help="Run FastSAM segmentation.",
+    st.selectbox(
+        label="Model to use",
+        options=("FastSAM", "MobileSAM", "SAM2-t"),
+        placeholder="FastSAM",
+        key="model_name"
     )
     st.button(
-        "MobileSAM",
+        "Create Predictions",
         on_click=trigger_segmentation,
-        args=("MobileSAM",),
-        help="Run MobileSAM segmentation.",
+        help="Run the specified segmentation model for markers or current extent",
     )
     st.button(
         "Delete Points",
