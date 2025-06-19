@@ -20,30 +20,20 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-st.markdown(
-    """
-        <style>
-               .block-container {
-                    padding-top: 1rem;
-                    padding-bottom: 0rem;
-                    padding-left: 5rem;
-                    padding-right: 5rem;
-                }
-        </style>
-        """,
-    unsafe_allow_html=True,
-)
+with open("style.css") as f:
+    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 st.title("Satellite Image Segmentation")
 
 with st.expander("❓ How to use"):
     st.markdown(
-        """
-    1. Click on the map to place one or more points.  
+    """
+    1. Use the draw marker icon (top left of the map) to place points on image features you wish to segment.  
+    OR Zoom in on the image to the extent you wish to segment.
     2. Choose **FastSAM** or **MobileSAM** from the sidebar.  
-    3. Wait for the segmentation overlay.  
-    4. (Optional) Download the GeoJSON.  
-    5. Delete points or predictions as needed.
+    3. Wait for the segmentation predictions to draw.  
+    4. (Optional) Download the predictions as a GeoJSON file.  
+    5. Delete points or predictions and run again as needed.
     """
     )
 
@@ -155,7 +145,7 @@ def create_segmentation_geojson(tif_path, profile, coords=None, use_model="FastS
                 points=coords,
                 device="cpu",
                 retina_masks=True,
-                imgsz=512,
+                imgsz=1024,
                 conf=0.3,
                 iou=0.9,
             )
@@ -165,12 +155,18 @@ def create_segmentation_geojson(tif_path, profile, coords=None, use_model="FastS
             results = model(
                 tif_path,
                 device="cpu",
+                imgsz=1024,
+                conf=0.3,
+                iou=0.9,
             )
         else:
             results = model(
                 tif_path,
                 points=coords,
                 device="cpu",
+                imgsz=1024,
+                conf=0.3,
+                iou=0.9,
             )
 
     res = results[0]
@@ -295,7 +291,7 @@ with st.sidebar:
     if st.session_state.get("gdf") is not None:
         geojson_str = st.session_state["gdf"].to_json()
         st.sidebar.download_button(
-            "Download GeoJSON",
+            "Download predictions",
             data=geojson_str,
             file_name="seg_preds.geojson",
             mime="application/geo+json"
@@ -304,7 +300,8 @@ with st.sidebar:
 if st.session_state["show_segmentation"] and not st.session_state["segmentation_done"]:
     points_use = st.session_state["points"]
     pixel_coords = to_pixel_coordinates(points_use, profile)
-    gdf = create_segmentation_geojson(TIF_PATH, profile, pixel_coords, st.session_state["model_name"])
+    with st.spinner(f"Generating {st.session_state["model_name"]} predictions...", show_time=True):
+        gdf = create_segmentation_geojson(TIF_PATH, profile, pixel_coords, st.session_state["model_name"])
     geosjon_file = download_polys(gdf)
     st.session_state["gdf"] = gdf
     st.session_state["segmentation_done"] = True
