@@ -40,13 +40,20 @@ with st.expander("❓ How to use"):
 
 TIF_PATH = Path("data") / "rgb_fast_sam_test.tif"
 
+IMGSZ_DEFAULT = 512
+CONF_DEFAULT = 0.3
+IOU_DEFAULT = 0.5
+
 if "initialized" not in st.session_state:
-    st.session_state["show_segmentation"] = False
-    st.session_state["segmentation_done"] = False
+    st.session_state["gdf"] = None
+    st.session_state["segmentation_run"] = False
     st.session_state["initialized"] = True
     st.session_state["out"] = {}
     st.session_state["points"] = []
     st.session_state["map"] = None
+    st.session_state["imgsz"] = IMGSZ_DEFAULT
+    st.session_state["conf"] = CONF_DEFAULT
+    st.session_state["iou"] = IOU_DEFAULT
 
 
 def to_pixel_coordinates(coordinates, profile):
@@ -162,6 +169,8 @@ def create_segmentation_geojson(
         )
 
     res = results[0]
+    if res.masks is None:
+        return None
     masks = res.masks.data.cpu().numpy()
 
     transform = profile["transform"]
@@ -209,24 +218,32 @@ def create_map(center, zoom_val, img_path):
 
 
 def trigger_segmentation():
-    st.session_state["show_segmentation"] = True
-    st.session_state["segmentation_done"] = False
+    st.session_state["gdf"] = None
+    st.session_state["segmentation_run"] = True
+    st.session_state["no_masks"] = None
 
 
 def clear_segmentation():
-    st.session_state["show_segmentation"] = False
     st.session_state["segmentation_done"] = False
     st.session_state["gdf"] = None
 
 
+def reset_params():
+    st.session_state["imgsz"] = IMGSZ_DEFAULT
+    st.session_state["conf"] = CONF_DEFAULT
+    st.session_state["iou"] = IOU_DEFAULT
+
+
 def delete_points():
     if "center" in st.session_state["out"]:
-        new_center = [
+        old_center = [
             st.session_state["out"]["center"]["lat"],
             st.session_state["out"]["center"]["lng"],
         ]
-        st.session_state["center"] = new_center
-        st.session_state["zoom"] = st.session_state["out"]["zoom"]
+        old_zoom = st.session_state["out"]["zoom"]
+        st.session_state["center"] = old_center
+        st.session_state["zoom"] = old_zoom
+    st.session_state["no_masks"] = False
     st.session_state["points"] = []
     st.session_state["map_key"] += 1
 
@@ -282,8 +299,45 @@ with st.sidebar:
         label="Model to use",
         options=("FastSAM", "MobileSAM", "SAM2-t"),
         placeholder="FastSAM",
-        key="model_name"
+        key="model_name",
     )
+    with st.expander("Segmentation parameters", expanded=False):
+        if st.button("Reset parameters"):
+            reset_params()
+            st.session_state["no_masks"] = None
+        st.selectbox(
+            "Input image size",
+            (128, 256, 512, 1024),
+            index=(
+                0
+                if st.session_state["imgsz"] == 128
+                else (
+                    1
+                    if st.session_state["imgsz"] == 256
+                    else 2 if st.session_state["imgsz"] == 512 else 3
+                )
+            ),
+            key="imgsz",
+            help="Size to resize the image for segmentation",
+        )
+        st.slider(
+            "Confidence threshold",
+            min_value=0.01,
+            max_value=0.99,
+            value=st.session_state["conf"],
+            step=0.01,
+            key="conf",
+            help="Minimum confidence for mask predictions",
+        )
+        st.slider(
+            "IOU threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=st.session_state["iou"],
+            step=0.01,
+            key="iou",
+            help="Non-max suppression IOU threshold",
+        )
     st.button(
         "Create Predictions",
         on_click=trigger_segmentation,
@@ -308,28 +362,48 @@ with st.sidebar:
             mime="application/geo+json",
         )
 
-if st.session_state["show_segmentation"] and not st.session_state["segmentation_done"]:
+if st.session_state["gdf"] is None and st.session_state["segmentation_run"]:
     points_use = st.session_state["points"]
     pixel_coords = to_pixel_coordinates(points_use, profile)
     with st.spinner(
         f"Generating {st.session_state["model_name"]} predictions...", show_time=True
     ):
         gdf = create_segmentation_geojson(
-            TIF_PATH, profile, pixel_coords, st.session_state["model_name"]
+            TIF_PATH,
+            profile,
+            pixel_coords,
+            st.session_state["model_name"],
+            imgsz=st.session_state["imgsz"],
+            conf=st.session_state["conf"],
+            iou=st.session_state["iou"],
         )
-    geosjon_file = download_polys(gdf)
-    st.session_state["gdf"] = gdf
-    st.session_state["segmentation_done"] = True
+    if gdf is None:
+        st.session_state["no_masks"] = True
+        st.session_state["segmentation_run"] = False
+        st.session_state["gdf"] = None
+    else:
+        st.session_state["no_masks"] = False
+        geosjon_file = download_polys(gdf)
+        st.session_state["gdf"] = gdf
+        st.session_state["segmentation_run"] = False
 
+
+if st.session_state.get("no_masks"):
+    st.error(
+        "No segmentation masks were generated with those parameters.  \n"
+        "Try lowering the confidence or IOU thresholds, or increasing image size."
+    )
+
+
+if st.session_state["gdf"] is not None:
     if "center" in st.session_state["out"]:
-        new_center = [
+        old_center = [
             st.session_state["out"]["center"]["lat"],
             st.session_state["out"]["center"]["lng"],
         ]
-        st.session_state["center"] = new_center
-        st.session_state["zoom"] = st.session_state["out"]["zoom"]
-
-if st.session_state["show_segmentation"]:
+        old_zoom = st.session_state["out"]["zoom"]
+        st.session_state["center"] = old_center
+        st.session_state["zoom"] = old_zoom
     # Add segmentation polygons to the map
     folium.GeoJson(
         st.session_state["gdf"],
@@ -352,7 +426,6 @@ out = st_folium(
 )
 
 st.session_state["out"] = out
-
 current_points = out["all_drawings"]
 stored_points = st.session_state["points"]
 
