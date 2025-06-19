@@ -4,3 +4,7 @@
                     padding-left: 5rem;
                     padding-right: 5rem;
                 }
+
+h1 {
+    font-size: 2rem !important;
+}
