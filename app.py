@@ -51,6 +51,7 @@ if "initialized" not in st.session_state:
     st.session_state["out"] = {}
     st.session_state["points"] = []
     st.session_state["map"] = None
+    st.session_state["new_gdf"] = False
     st.session_state["imgsz"] = IMGSZ_DEFAULT
     st.session_state["conf"] = CONF_DEFAULT
     st.session_state["iou"] = IOU_DEFAULT
@@ -385,6 +386,7 @@ if st.session_state["gdf"] is None and st.session_state["segmentation_run"]:
         st.session_state["no_masks"] = False
         geosjon_file = download_polys(gdf)
         st.session_state["gdf"] = gdf
+        st.session_state["new_gdf"] = True
         st.session_state["segmentation_run"] = False
 
 
@@ -396,7 +398,7 @@ if st.session_state.get("no_masks"):
 
 
 if st.session_state["gdf"] is not None:
-    if "center" in st.session_state["out"]:
+    if "center" in st.session_state["out"] and st.session_state["new_gdf"]:
         old_center = [
             st.session_state["out"]["center"]["lat"],
             st.session_state["out"]["center"]["lng"],
@@ -404,6 +406,7 @@ if st.session_state["gdf"] is not None:
         old_zoom = st.session_state["out"]["zoom"]
         st.session_state["center"] = old_center
         st.session_state["zoom"] = old_zoom
+        st.session_state["new_gdf"] = False
     # Add segmentation polygons to the map
     folium.GeoJson(
         st.session_state["gdf"],
