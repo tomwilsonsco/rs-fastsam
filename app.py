@@ -3,18 +3,13 @@ from streamlit_folium import st_folium
 import folium
 from folium.plugins import Draw
 import rasterio as rio
-from PIL import Image
 from pathlib import Path
-from shapely.geometry import box
-from rasterio.transform import xy
-from rasterio.windows import Window
+from rasterio.windows import Window, transform as window_transform
 from rasterio.features import shapes
 from shapely.geometry import shape
 from rasterio.warp import transform_bounds
 from ultralytics import FastSAM, SAM
 import numpy as np
-import cv2
-from shapely.geometry import Polygon, mapping
 import geopandas as gpd
 from pyproj import Transformer
 
@@ -42,7 +37,7 @@ with st.expander("❓ How to use"):
     )
 
 
-TIF_PATH = Path("data") / "rgb_fastsam_web.tif"
+TIF_PATH = Path("data") / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
 
 IMGSZ_DEFAULT = 512
 CONF_DEFAULT = 0.3
@@ -78,99 +73,55 @@ def to_pixel_coordinates(coordinates, profile):
 
     pixel_coords = []
     for coord in coordinates:
-        lon, lat = coord[0], coord[1]
+        lon, lat = coord[1], coord[0]
         x, y = transformer.transform(lon, lat)
         # Convert world coordinates (x, y) to pixel coordinates
         col, row = ~profile["transform"] * (x, y)
         col, row = int(round(col)), int(round(row))
-
         # Check if the pixel lies within the image bounds
         if 0 <= col < profile["width"] and 0 <= row < profile["height"]:
+            
             pixel_coords.append([col, row])
 
     return pixel_coords
 
 
-@st.cache_data
-def create_png(tif_path):
-    with rio.open(tif_path) as src:
-        img = src.read()            # (3, H, W)
-        profile = src.profile
-        # 1) transform bounds to EPSG:4326 properly:
-        min_lon, min_lat, max_lon, max_lat = transform_bounds(
-            src.crs, "EPSG:4326",
-            *src.bounds,
-            densify_pts=21           # densify to capture any rotation/skew
-        )
-
-    # 2) Calculate centroid in lat/lon
-    centroid = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
-
-    # 3) Build the Folium‐ready bounds:
-    #    folium wants [[south, west], [north, east]]
-    image_bounds = [
-        [min_lat, min_lon],
-        [max_lat, max_lon],
-    ]
-
-    # 4) Save PNG overlay (unchanged)
-    tmp_path = Path("/tmp/overlay.png")
-
-    img_rgb = img.transpose(1, 2, 0)
-   
-
-    return profile, image_bounds, centroid, img_rgb
-
-
 def get_window_array(tif_path):
-    """
-    Extract a square patch from the raster centered on the current map center.
-    Uses st.session_state['center'] and st.session_state['imgsz'].
 
-    Returns a tuple containing:
-    - A numpy array with shape (H, W, C) suitable for Ultralytics models.
-    - The transform for the windowed patch.
-    """
-    imgsz = st.session_state["imgsz"]
-    center_latlon = [st.session_state["center"][1], st.session_state["center"][0]] 
+        with rio.open(tif_path) as f:
+            profile = f.profile
 
-    with rio.open(tif_path) as src:
-        profile = src.profile
+        win_size = st.session_state["win_size"]
+
+        center_latlon = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
+
         width, height = profile["width"], profile["height"]
-
-        # Convert center to pixel coordinates using the shared function
+        print(center_latlon)
         pixel_coords = to_pixel_coordinates([center_latlon], profile)
 
         if not pixel_coords:
-            return None, None  # Outside image bounds
+            return None, None, None  # Outside image bounds
 
         col, row = pixel_coords[0]
+        half = win_size // 2
+        col_off = max(0, min(col - half, width - win_size))
+        row_off = max(0, min(row - half, height - win_size))
 
-        # Calculate window around center
-        half = imgsz // 2
-        col_off = max(0, min(col - half, width - imgsz))
-        row_off = max(0, min(row - half, height - imgsz))
+        win = Window(
+            col_off=col_off, row_off=row_off, width=win_size, height=win_size
+        ).round_offsets()
 
-        window = Window(col_off=col_off, row_off=row_off, width=imgsz, height=imgsz).round_offsets()
+        with rio.open(tif_path) as f:
+            win_arr = f.read(window=win)
+            win_arr = win_arr.transpose(1,2,0)
 
-        # Read windowed patch: (bands, H, W)
-        patch = src.read(window=window)
+        win_trans = window_transform(win, profile["transform"])
 
-        # Get transform for the window
-        window_transform = src.window_transform(window)
-
-    # Convert to (H, W, C)
-    patch = patch.transpose(1, 2, 0)
-
-    # Convert to uint8 if needed
-    if patch.dtype != np.uint8:
-        patch = patch.astype(np.uint8)
-
-    return patch, window_transform
+        return win_arr, win_trans, profile["crs"]
 
 
 def create_segmentation_geojson(
-    img_arr, profile, coords=None, use_model="FastSAM", imgsz=1024, conf=0.2, iou=0.5
+    tif_path, coords=None, use_model="FastSAM", imgsz=1024, conf=0.2, iou=0.5
 ):
     """
     Run segmentation on the TIFF image, convert masks to polygon geometries,
@@ -181,7 +132,9 @@ def create_segmentation_geojson(
     output_geojson_path (str): Output path for the GeoJSON file.
     coords (list, optional): Optional points for interactive segmentation.
     """
-    #img_arr, win_trans = get_window_array(tif_path)
+    img_win, win_trans, use_crs = get_window_array(tif_path)
+    if img_win is None or not img_win.any():
+        return None
     # Load model and run inference
     if use_model == "FastSAM":
         model = FastSAM("FastSAM-x.pt")
@@ -196,7 +149,7 @@ def create_segmentation_geojson(
 
     if coords is None:
         results = model(
-            img_arr,
+            img_win,
             device="cpu",
             retina_masks=True,
             imgsz=imgsz,
@@ -205,7 +158,7 @@ def create_segmentation_geojson(
         )
     else:
         results = model(
-            img_arr,
+            img_win,
             points=coords,
             device="cpu",
             retina_masks=True,
@@ -219,8 +172,8 @@ def create_segmentation_geojson(
         return None
     masks = res.masks.data.cpu().numpy()
 
-    transform = profile["transform"]
-    crs = profile["crs"]
+    transform = win_trans
+    crs = use_crs
 
     polygons = []
     for mask in masks:
@@ -236,15 +189,21 @@ def create_segmentation_geojson(
     return gdf
 
 
-def create_map(center, zoom_val, img_arr):
+def create_map(center, zoom_val):
     """
     Create a folium map with initial settings and return it.
     """
 
-    m = folium.Map(location=center, zoom_start=zoom_val)
+    m = folium.Map(location=center, zoom_start=zoom_val, max_zoom=15)
 
-    folium.raster_layers.ImageOverlay(
-         img_arr, bounds=image_bounds, opacity=1, name="RGB image", mercator_project=True,
+    folium.TileLayer(
+    tiles="https://tomwilsonsco.github.io/s2_tiles/tiles//{z}/{x}/{y}.png",
+    attr="Sentinel-2 10m",
+    name="RGB 10m tiles",
+    overlay=True,
+    control=True,
+    no_wrap=True,
+    max_zoom=15,
     ).add_to(m)
 
     return m
@@ -257,6 +216,14 @@ def trigger_segmentation():
 
 
 def clear_segmentation():
+    if "center" in st.session_state["out"]:
+        old_center = [
+            st.session_state["out"]["center"]["lat"],
+            st.session_state["out"]["center"]["lng"],
+        ]
+        old_zoom = st.session_state["out"]["zoom"]
+        st.session_state["center"] = old_center
+        st.session_state["zoom"] = old_zoom
     st.session_state["segmentation_done"] = False
     st.session_state["gdf"] = None
 
@@ -281,17 +248,18 @@ def delete_points():
     st.session_state["map_key"] += 1
 
 
-profile, image_bounds, centroid, img_arr = create_png(TIF_PATH)
-
-if "center" not in st.session_state:
-    st.session_state["center"] = centroid
+# if "center" not in st.session_state:
+#     st.session_state["center"] = centroid
 if "zoom" not in st.session_state:
     st.session_state["zoom"] = 13
 
 if "map_key" not in st.session_state:
     st.session_state["map_key"] = 0
 
-m = create_map(st.session_state["center"], st.session_state["zoom"], img_arr)
+st.session_state["center"] = [55.967, -2.5199]
+st.session_state["zoom"] = 13
+
+m = create_map(st.session_state["center"], st.session_state["zoom"])
 
 
 draw = Draw(
@@ -341,16 +309,8 @@ with st.sidebar:
         st.selectbox(
             "Input image size",
             (128, 256, 512, 1024, 2048),
-            index=(
-                0
-                if st.session_state["imgsz"] == 128
-                else (
-                    1
-                    if st.session_state["imgsz"] == 256
-                    else 2 if st.session_state["imgsz"] == 512 else 3
-                )
-            ),
-            key="imgsz",
+            index=1,
+            key="win_size",
             help="Size to resize the image for segmentation",
         )
         st.slider(
@@ -397,16 +357,15 @@ with st.sidebar:
 
 if st.session_state["gdf"] is None and st.session_state["segmentation_run"]:
     points_use = st.session_state["points"]
-    pixel_coords = to_pixel_coordinates(points_use, profile)
+    pixel_coords = None #to_pixel_coordinates(points_use, profile)
     with st.spinner(
         f"Generating {st.session_state["model_name"]} predictions...", show_time=True
     ):
         gdf = create_segmentation_geojson(
-            img_arr,
-            profile,
+            TIF_PATH,
             pixel_coords,
             st.session_state["model_name"],
-            imgsz=st.session_state["imgsz"],
+            imgsz=1024,
             conf=st.session_state["conf"],
             iou=st.session_state["iou"],
         )
