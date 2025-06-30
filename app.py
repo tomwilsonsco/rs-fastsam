@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
-from folium.plugins import Draw
+from folium.plugins import Draw, FeatureGroupSubGroup
 import rasterio as rio
 from pathlib import Path
 from rasterio.windows import bounds, from_bounds, transform as window_transform
@@ -210,7 +210,7 @@ def create_map(center, zoom_val):
     folium.TileLayer(
         tiles="https://tomwilsonsco.github.io/s2_tiles/tiles//{z}/{x}/{y}.png",
         attr="Sentinel-2 10m",
-        name="RGB 10m tiles",
+        name="Sentinel 2 RGB 10m",
         overlay=True,
         control=True,
         no_wrap=True,
@@ -405,16 +405,23 @@ draw = Draw(
 draw.add_to(m)
 
 
-fg = folium.FeatureGroup(name="Features")
+fg = folium.FeatureGroup(name="Features", control=False)
+
+polys_fg = FeatureGroupSubGroup(fg, "Segmentation Polygons")
+pts_fg  = FeatureGroupSubGroup(fg, "Point Markers")
 
 if not st.session_state["gdf"].empty:
-    fg.add_child(
+    polys_fg.add_child(
     folium.GeoJson(
         st.session_state["gdf"],
-        name="Segmentation Polygons",
+        name="Prediction Polygons",
         color="red",
         fill=False,
+        overlay=True,
+        control=True
     ))
+
+
 
 if st.session_state.get("out", False):
     if st.session_state["out"].get("all_drawings", False):
@@ -422,31 +429,17 @@ if st.session_state.get("out", False):
 
 if st.session_state["points"]:
     for point in st.session_state["points"]:
-        fg.add_child(
+        pts_fg.add_child(
             folium.Marker(
                 location=[point[1], point[0]],
+                name="point markers",
+                control=True
             )
         )
 
-# if st.session_state["gdf"] is not None:
-#     # if "center" in st.session_state["out"] and st.session_state["new_gdf"]:
-#     #     old_center = [
-#     #         st.session_state["out"]["center"]["lat"],
-#     #         st.session_state["out"]["center"]["lng"],
-#     #     ]
-#     #     old_zoom = st.session_state["out"]["zoom"]
-#     #     st.session_state["center"] = old_center
-#     #     st.session_state["zoom"] = old_zoom
-#     #     st.session_state["new_gdf"] = False
-#     # Add segmentation polygons to the map
-#     fg.add_child(
-#     folium.GeoJson(
-#         st.session_state["gdf"],
-#         name="Segmentation Polygons",
-#         color="red",
-#         fill=False,
-#     ))
-
+fg.add_to(m)
+polys_fg.add_to(m)
+pts_fg.add_to(m)
 
 folium.LayerControl().add_to(m)
 
