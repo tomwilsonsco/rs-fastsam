@@ -4,7 +4,7 @@ import folium
 from folium.plugins import Draw
 import rasterio as rio
 from pathlib import Path
-from rasterio.windows import Window, transform as window_transform
+from rasterio.windows import from_bounds, transform as window_transform
 from rasterio.features import shapes
 from shapely.geometry import shape
 from rasterio.warp import transform_bounds
@@ -12,6 +12,7 @@ from ultralytics import FastSAM, SAM
 import numpy as np
 import geopandas as gpd
 from pyproj import Transformer
+from shapely.geometry import box
 
 # → Page config
 st.set_page_config(
@@ -93,23 +94,19 @@ def get_window_array(tif_path):
 
         win_size = st.session_state["win_size"]
 
-        center_latlon = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
+        #center_latlon = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
+        minx = st.session_state["out"]["bounds"]["_southWest"]["lng"]
+        miny =st.session_state["out"]["bounds"]["_southWest"]["lat"]
+        maxx =st.session_state["out"]["bounds"]["_northEast"]["lng"]
+        maxy =st.session_state["out"]["bounds"]["_northEast"]["lat"]
 
-        width, height = profile["width"], profile["height"]
-        print(center_latlon)
-        pixel_coords = to_pixel_coordinates([center_latlon], profile)
+        # Transform the bounding box to the raster's CRS
+        transformer = Transformer.from_crs("EPSG:4326", profile["crs"], always_xy=True)
+        minx, miny = transformer.transform(minx, miny)
+        maxx, maxy = transformer.transform(maxx, maxy)
+        bbox = box(minx, miny, maxx, maxy)
 
-        if not pixel_coords:
-            return None, None, None  # Outside image bounds
-
-        col, row = pixel_coords[0]
-        half = win_size // 2
-        col_off = max(0, min(col - half, width - win_size))
-        row_off = max(0, min(row - half, height - win_size))
-
-        win = Window(
-            col_off=col_off, row_off=row_off, width=win_size, height=win_size
-        ).round_offsets()
+        win = from_bounds(minx, miny, maxx, maxy, profile["transform"])
 
         with rio.open(tif_path) as f:
             win_arr = f.read(window=win)
@@ -138,10 +135,13 @@ def create_segmentation_geojson(
     # Load model and run inference
     if use_model == "FastSAM":
         model = FastSAM("FastSAM-x.pt")
+        imgsz=512
     elif use_model == "MobileSAM":
         model = SAM("mobile_sam.pt")
+        imgsz=1024
     elif use_model == "SAM2-t":
         model = SAM("sam2_t.pt")
+        imgsz=1024
     else:
         raise ValueError(
             f"Invalid model name: {use_model}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
@@ -248,16 +248,15 @@ def delete_points():
     st.session_state["map_key"] += 1
 
 
-# if "center" not in st.session_state:
-#     st.session_state["center"] = centroid
 if "zoom" not in st.session_state:
-    st.session_state["zoom"] = 13
+    st.session_state["zoom"] = 14
+
+if "center" not in st.session_state:
+    st.session_state["center"] = [55.967, -2.5199]
 
 if "map_key" not in st.session_state:
     st.session_state["map_key"] = 0
 
-st.session_state["center"] = [55.967, -2.5199]
-st.session_state["zoom"] = 13
 
 m = create_map(st.session_state["center"], st.session_state["zoom"])
 
@@ -355,7 +354,11 @@ with st.sidebar:
             mime="application/geo+json",
         )
 
-if st.session_state["gdf"] is None and st.session_state["segmentation_run"]:
+current_zoom = st.session_state["out"]["zoom"]
+
+print(current_zoom)
+
+if st.session_state["gdf"] is None and st.session_state["segmentation_run"] and current_zoom >=14:
     points_use = st.session_state["points"]
     pixel_coords = None #to_pixel_coordinates(points_use, profile)
     with st.spinner(
