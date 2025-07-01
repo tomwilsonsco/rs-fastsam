@@ -52,8 +52,8 @@ if "initialized" not in st.session_state:
     st.session_state["segmentation_run"] = False
     st.session_state["initialized"] = True
     st.session_state["points"] = []
+    st.session_state["rectangles"] = []
     st.session_state["map"] = None
-    st.session_state["new_gdf"] = False
     st.session_state["predict_disabled"] = False
     st.session_state["imgsz"] = IMGSZ_DEFAULT
     st.session_state["conf"] = CONF_DEFAULT
@@ -225,12 +225,17 @@ def trigger_segmentation():
     st.session_state["segmentation_run"] = True
     st.session_state["no_masks"] = None
     old_center = [
-            st.session_state["out"]["center"]["lat"],
-            st.session_state["out"]["center"]["lng"],
-        ]
+        st.session_state["out"]["center"]["lat"],
+        st.session_state["out"]["center"]["lng"],
+    ]
     old_zoom = st.session_state["out"]["zoom"]
     st.session_state["center"] = old_center
     st.session_state["zoom"] = old_zoom
+    current_points = st.session_state["out"]["all_drawings"]
+    if current_points:
+        all_points = [p["geometry"]["coordinates"] for p in current_points]
+        st.session_state["points"] = all_points
+
 
 
 def clear_segmentation():
@@ -263,11 +268,11 @@ def delete_points():
         st.session_state["zoom"] = old_zoom
     st.session_state["no_masks"] = False
     st.session_state["points"] = []
-    # st.session_state["map_key"] += 1
+
 
 
 def download_polys(gdf):
-    return gdf.to_file("preds.geojson", driver="GeoJSON")
+    return gdf.to_file("data/preds.geojson", driver="GeoJSON")
 
 
 if st.session_state.get("out", False):
@@ -371,7 +376,6 @@ if st.session_state.get("out", False):
             st.session_state["no_masks"] = False
             geosjon_file = download_polys(gdf)
             st.session_state["gdf"] = gdf
-            st.session_state["new_gdf"] = True
             st.session_state["segmentation_run"] = False
 
 
@@ -388,77 +392,86 @@ if "center" not in st.session_state:
     st.session_state["center"] = [55.967, -2.5199]
 
 
+# PREDICTIONS LAYER
+pred_fg = folium.FeatureGroup(name="Prediction Polygons", control=True)
+
+if not st.session_state["gdf"].empty:
+    pred_fg.add_child(
+        folium.GeoJson(
+            st.session_state["gdf"],
+            name="Prediction Polygons",
+            color="red",
+            fill=False,
+            overlay=True,
+            control=True,
+        )
+    )
+
+
+# POINTS LAYER
+
+fg = folium.FeatureGroup(name="Features", control=True)
+
+pts_fg = FeatureGroupSubGroup(fg, "Point Markers")
+
+for point in st.session_state.get("points", None):
+    fg.add_child(
+        folium.Marker(
+            location=[point[1], point[0]], name="point markers", control=True
+        )
+    )
+
+# RECTANGLES LAYER
+rect_fg = FeatureGroupSubGroup(fg, "Rectangle Markers")
+
+if st.session_state["rectangles"]:
+    for rect in st.session_state["rectangles"]:
+        fg.add_child(
+            folium.Polygon(locations=rect[0], name="rectangle markers", control=True)
+        )
+
 m = create_map(st.session_state["center"], st.session_state["zoom"])
 
+# Add layers to map
+m.add_child(fg)
+m.add_child(pred_fg)
+m.add_child(pts_fg)
+m.add_child(rect_fg)
 
 draw = Draw(
+    feature_group=fg,
     draw_options={
         "polyline": False,
         "polygon": False,
         "circle": False,
         "rectangle": True,
         "circlemarker": False,
-        "marker": True,  # Enable only point (marker)
+        "marker": True,
     },
     edit_options={"edit": False, "remove": False},
 )
 draw.add_to(m)
 
-
-fg = folium.FeatureGroup(name="Features", control=False)
-
-polys_fg = FeatureGroupSubGroup(fg, "Segmentation Polygons")
-pts_fg  = FeatureGroupSubGroup(fg, "Point Markers")
-
-if not st.session_state["gdf"].empty:
-    polys_fg.add_child(
-    folium.GeoJson(
-        st.session_state["gdf"],
-        name="Prediction Polygons",
-        color="red",
-        fill=False,
-        overlay=True,
-        control=True
-    ))
-
-
-
-if st.session_state.get("out", False):
-    if st.session_state["out"].get("all_drawings", False):
-        points = st.session_state["out"]["all_drawings"]
-
-if st.session_state["points"]:
-    for point in st.session_state["points"]:
-        pts_fg.add_child(
-            folium.Marker(
-                location=[point[1], point[0]],
-                name="point markers",
-                control=True
-            )
-        )
-
-fg.add_to(m)
-polys_fg.add_to(m)
-pts_fg.add_to(m)
-
 folium.LayerControl().add_to(m)
+
+def callback():
+    out = st.session_state.get("out", None)
+    if out:
+        current_points = st.session_state["out"]["all_drawings"]
+        if current_points and len(current_points) > len(st.session_state["points"]):
+            st.session_state["center"] = [out["center"]["lat"],out["center"]["lng"]]
+            st.session_state["zoom"] = out["zoom"]
+            all_points = [p["geometry"]["coordinates"] for p in current_points]
+            st.session_state["points"] = all_points
+
 
 out = st_folium(
     m,
     center=st.session_state["center"],
     zoom=st.session_state["zoom"],
-    feature_group_to_add=fg,
+    feature_group_to_add=[fg, pts_fg, rect_fg, pred_fg],
     key="out",
     height=600,
     width=900,
+    #on_change=callback,
 )
-
-current_points = out["all_drawings"]
-print(current_points)
-stored_points = st.session_state["points"]
-
-if current_points:
-    new_points = [p["geometry"]["coordinates"] for p in current_points] + stored_points
-    new_points = list(set(tuple(pt) for pt in new_points))
-    new_points = [list(pt) for pt in new_points]
-    st.session_state["points"] = new_points
