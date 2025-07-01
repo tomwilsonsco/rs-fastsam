@@ -231,11 +231,20 @@ def trigger_segmentation():
     old_zoom = st.session_state["out"]["zoom"]
     st.session_state["center"] = old_center
     st.session_state["zoom"] = old_zoom
-    current_points = st.session_state["out"]["all_drawings"]
-    if current_points:
-        all_points = [p["geometry"]["coordinates"] for p in current_points]
+    current_drawings = st.session_state["out"]["all_drawings"]
+    if current_drawings:
+        all_points = [
+            p["geometry"]["coordinates"]
+            for p in current_drawings
+            if p["geometry"]["type"] == "Point"
+        ]
         st.session_state["points"] = all_points
-
+        all_rectangles = [
+            p["geometry"]["coordinates"]
+            for p in current_drawings
+            if p["geometry"]["type"] == "Polygon"
+        ]
+        st.session_state["rectangles"] = all_rectangles
 
 
 def clear_segmentation():
@@ -257,18 +266,18 @@ def reset_params():
     st.session_state["iou"] = IOU_DEFAULT
 
 
-def delete_points():
-    if "center" in st.session_state["out"]:
-        old_center = [
-            st.session_state["out"]["center"]["lat"],
-            st.session_state["out"]["center"]["lng"],
-        ]
-        old_zoom = st.session_state["out"]["zoom"]
-        st.session_state["center"] = old_center
-        st.session_state["zoom"] = old_zoom
+def delete_features():
     st.session_state["no_masks"] = False
     st.session_state["points"] = []
-
+    st.session_state["rectangles"] = []
+    if st.session_state["out"].get("center", False):
+        clean_center = [
+            st.session_state["out"]["center"]["lat"] + 0.0001,
+            st.session_state["out"]["center"]["lng"],
+        ]
+        clean_zoom = st.session_state["out"]["zoom"]
+        st.session_state["center"] = clean_center
+        st.session_state["zoom"] = clean_zoom
 
 
 def download_polys(gdf):
@@ -327,8 +336,8 @@ with st.sidebar:
         help="Run the specified segmentation model for markers or current extent",
     )
     st.button(
-        "Delete Points",
-        on_click=delete_points,
+        "Delete Drawn Features",
+        on_click=delete_features,
         help="Delete all points you have drawn.",
     )
     st.button(
@@ -410,33 +419,34 @@ if not st.session_state["gdf"].empty:
 
 # POINTS LAYER
 
-fg = folium.FeatureGroup(name="Features", control=True)
+fg = folium.FeatureGroup(name="Drawing features", control=True)
 
-pts_fg = FeatureGroupSubGroup(fg, "Point Markers")
 
 for point in st.session_state.get("points", None):
     fg.add_child(
-        folium.Marker(
-            location=[point[1], point[0]], name="point markers", control=True
-        )
+        folium.Marker(location=[point[1], point[0]], name="point markers", control=True)
     )
 
 # RECTANGLES LAYER
-rect_fg = FeatureGroupSubGroup(fg, "Rectangle Markers")
-
-if st.session_state["rectangles"]:
-    for rect in st.session_state["rectangles"]:
-        fg.add_child(
-            folium.Polygon(locations=rect[0], name="rectangle markers", control=True)
+for rect in st.session_state.get("rectangles", None):
+    rect = rect[0]
+    rect = [[lat, lon] for lon, lat in rect]
+    fg.add_child(
+        folium.Polygon(
+            locations=rect,
+            name="rectangle markers",
+            fill=True,
+            fill_opacity=0.2,
+            control=True,
         )
+    )
 
 m = create_map(st.session_state["center"], st.session_state["zoom"])
 
 # Add layers to map
 m.add_child(fg)
 m.add_child(pred_fg)
-m.add_child(pts_fg)
-m.add_child(rect_fg)
+
 
 draw = Draw(
     feature_group=fg,
@@ -454,24 +464,12 @@ draw.add_to(m)
 
 folium.LayerControl().add_to(m)
 
-def callback():
-    out = st.session_state.get("out", None)
-    if out:
-        current_points = st.session_state["out"]["all_drawings"]
-        if current_points and len(current_points) > len(st.session_state["points"]):
-            st.session_state["center"] = [out["center"]["lat"],out["center"]["lng"]]
-            st.session_state["zoom"] = out["zoom"]
-            all_points = [p["geometry"]["coordinates"] for p in current_points]
-            st.session_state["points"] = all_points
-
-
 out = st_folium(
     m,
     center=st.session_state["center"],
     zoom=st.session_state["zoom"],
-    feature_group_to_add=[fg, pts_fg, rect_fg, pred_fg],
+    feature_group_to_add=[fg, pred_fg],
     key="out",
     height=600,
     width=900,
-    #on_change=callback,
 )
