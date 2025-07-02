@@ -12,7 +12,7 @@ from ultralytics import FastSAM, SAM
 import numpy as np
 import geopandas as gpd
 from pyproj import Transformer
-from shapely.geometry import box, Point
+from shapely.geometry import box, Point, Polygon
 
 # → Page config
 st.set_page_config(
@@ -28,19 +28,24 @@ st.title("Satellite Image Segmentation")
 with st.expander("❓ How to use"):
     st.markdown(
         """
-    1. Use the draw marker icon (top left of the map) to place points on image features you wish to segment.  
-    **Alternatively**, Zoom in on the image to the extent you wish to segment.
-    2. Choose **FastSAM** or **MobileSAM** from the sidebar.  
-    3. Wait for the segmentation predictions to draw.  
-    4. (Optional) Download the predictions as a GeoJSON file.  
-    5. Delete points or predictions and run again as needed.
+    1. Zoom in on the area you wish to segment. You need to zoom to level 14 or 15 to generate predictions.
+    2. (Optional) Use the draw marker / rectangle tools on the top left to place features on the map to target specific areas.
+    3. Choose **FastSAM**, **MobileSAM**, **SAM2-t** from the sidebar.  
+    4. Click Create Predictions and wait for the segmentation predictions to draw.  
+    5. (Optional) Download the predictions as a GeoJSON file.  
+    6. Delete drawings or predictions and run again as needed.
+
+    ##### Tips:
+    1. FastSAM is quicker, but MobileSAM can produce better quality segmentations for full extent.
+    2. Rectangle drawings are for targetting specific features like a field or lake, not for segmenting all features in a smaller extent.
+    2. When drawing features, only features in the current display extent are used for the segmentations.
     """
     )
 
 
 TIF_PATH = (
     Path("data")
-    / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
+    / "nir_8bit.tif"#"S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
 )
 
 IMGSZ_DEFAULT = 512
@@ -60,12 +65,12 @@ if "initialized" not in st.session_state:
     st.session_state["iou"] = IOU_DEFAULT
 
 
-def to_pixel_coordinates(coordinates, crs, bbox, win_trans):
+def to_pixel_coordinates(coordinates, crs, win_trans):
     """Convert list of [lon, lat] coordinates to pixel coordinates.
 
     For each [lon, lat] coordinate:
     - Convert from EPSG:4326 (WGS84) to the image CRS (profile['crs']).
-    - Convert world coordinates to pixel coordinates using the inverted affine transform.
+    - Convert world coordinates to pixel coordinates rasterio.transform.rowcol
     - Exclude any points that fall outside the image bounds defined by profile['width'] and profile['height'].
 
     Returns a list of [col, row] pixel coordinates.
@@ -81,21 +86,29 @@ def to_pixel_coordinates(coordinates, crs, bbox, win_trans):
 
     gdf = gdf.to_crs(crs)
 
-    print(gdf.shape)
+    bbox = extent_to_gdf().to_crs(crs)
 
-    gdf = gpd.sjoin(gdf, bbox[["geometry"]], how="inner", predicate="intersects")
-
-    print(gdf.shape)
+    minx, miny, maxx, maxy = bbox.bounds.iloc[0].to_list()
 
     pixel_coords = []
     for i, gdf_row in gdf.iterrows():
         x, y = gdf_row.geometry.x, gdf_row.geometry.y
-        row, col = rio.transform.rowcol(win_trans, x, y, op=round)
-        pixel_coords.append([int(col), int(row)])
-
-    print(pixel_coords)
-
+        if  minx <= x <= maxx and miny <= y <= maxy:
+            row, col = rio.transform.rowcol(win_trans, x, y, op=round)
+            pixel_coords.append([int(col), int(row)])
     return pixel_coords
+
+def get_current_extent():
+    minx = st.session_state["out"]["bounds"]["_southWest"]["lng"]
+    miny = st.session_state["out"]["bounds"]["_southWest"]["lat"]
+    maxx = st.session_state["out"]["bounds"]["_northEast"]["lng"]
+    maxy = st.session_state["out"]["bounds"]["_northEast"]["lat"]
+    return minx, miny, maxx, maxy
+
+def extent_to_gdf():
+    minx, miny, maxx, maxy = get_current_extent()
+    bbox = box(minx, miny, maxx, maxy)
+    return gpd.GeoDataFrame(geometry=[bbox], crs="epsg:4326")
 
 
 def get_window_array(tif_path):
@@ -103,20 +116,10 @@ def get_window_array(tif_path):
     with rio.open(tif_path) as f:
         profile = f.profile
 
-    # center_latlon = [st.session_state["out"]["center"]["lat"], st.session_state["out"]["center"]["lng"]]
-    minx = st.session_state["out"]["bounds"]["_southWest"]["lng"]
-    miny = st.session_state["out"]["bounds"]["_southWest"]["lat"]
-    maxx = st.session_state["out"]["bounds"]["_northEast"]["lng"]
-    maxy = st.session_state["out"]["bounds"]["_northEast"]["lat"]
-
-    # Transform the bounding box to the raster's CRS
-    transformer = Transformer.from_crs("EPSG:4326", profile["crs"], always_xy=True)
-    minx, miny = transformer.transform(minx, miny)
-    maxx, maxy = transformer.transform(maxx, maxy)
-
+    bbox = extent_to_gdf()
+    bbox = bbox.to_crs(profile["crs"])
+    minx, miny, maxx, maxy = bbox.bounds.iloc[0].to_list()
     win = from_bounds(minx, miny, maxx, maxy, profile["transform"])
-    bbox = box(minx, miny, maxx, maxy)
-    bbox = gpd.GeoDataFrame(geometry=[bbox], crs=profile["crs"])
 
     with rio.open(tif_path) as f:
         win_arr = f.read(window=win)
@@ -124,11 +127,37 @@ def get_window_array(tif_path):
 
     win_trans = window_transform(win, profile["transform"])
 
-    return win_arr, profile["crs"], bbox, win_trans
+    return win_arr, profile["crs"], win_trans
+
+def convert_boxes(boxes, crs, win_trans):
+    minx, miny, maxx, maxy = get_current_extent()
+    buffer_threshold = 0.0001
+    extent_bbox = box(minx + buffer_threshold, miny + buffer_threshold, maxx - buffer_threshold, maxy - buffer_threshold)
+    extent_gdf = gpd.GeoDataFrame(geometry=[extent_bbox], crs="epsg:4326").to_crs(crs)
+    drawn_bboxes = [tuple(Polygon(poly[0]).bounds) for poly in boxes]
+    results = []
+    for rect in drawn_bboxes:
+        rect_box = box(*rect)
+        if rect_box.intersects(extent_bbox):
+            clipped = rect_box.intersection(extent_bbox)
+            if not clipped.is_empty:
+                coords =  list(clipped.bounds)
+                bl = to_pixel_coordinates([[coords[0], coords[1]]], crs, win_trans)
+                tr = to_pixel_coordinates([[coords[2], coords[3]]], crs, win_trans)
+                # expects (x1, y1) is the top-left corner, (x2, y2) the bottom-right
+                if bl and tr:
+                    bl = bl[0]
+                    tr = tr[0]
+                    tl = [bl[0], tr[1]] 
+                    br = [tr[0], bl[1]]
+                    results.append([tl[0], tl[1], br[0], br[1]])   
+    return results
+
+
 
 
 def create_segmentation_geojson(
-    tif_path, coords=None, use_model="FastSAM", imgsz=1024, conf=0.2, iou=0.5
+    tif_path, points=None, boxes=None, use_model="FastSAM", imgsz=1024, conf=0.2, iou=0.5
 ):
     """
     Run segmentation on the TIFF image, convert masks to polygon geometries,
@@ -139,8 +168,9 @@ def create_segmentation_geojson(
     output_geojson_path (str): Output path for the GeoJSON file.
     coords (list, optional): Optional points for interactive segmentation.
     """
-    img_win, use_crs, bbox, win_trans = get_window_array(tif_path)
-    coords = to_pixel_coordinates(coords, use_crs, bbox, win_trans)
+    img_win, use_crs, win_trans = get_window_array(tif_path)
+    points = to_pixel_coordinates(points, use_crs, win_trans)
+    boxes = convert_boxes(boxes, use_crs, win_trans)
     if img_win is None or not img_win.any():
         return None
     # Load model and run inference
@@ -149,34 +179,46 @@ def create_segmentation_geojson(
         imgsz = imgsz
     elif use_model == "MobileSAM":
         model = SAM("mobile_sam.pt")
-        imgsz = imgsz
+        imgsz = 1024
     elif use_model == "SAM2-t":
         model = SAM("sam2_t.pt")
-        imgsz = imgsz
+        imgsz = 1024
     else:
         raise ValueError(
             f"Invalid model name: {use_model}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
         )
-
-    if coords is None:
-        results = model.predict(
+    if boxes:
+        try:
+            results = model(
             img_win,
+            points=points if points else None,
+            bboxes=boxes,
             device="cpu",
             retina_masks=True,
             imgsz=imgsz,
             conf=conf,
             iou=iou,
-        )
+            verbose=False,
+            )
+        except Exception as e:
+            st.error(f"An error occurred during segmentation: {e}")
+            return None
     else:
-        results = model(
-            img_win,
-            points=coords,
-            device="cpu",
-            retina_masks=True,
-            imgsz=imgsz,
-            conf=conf,
-            iou=iou,
-        )
+        try:
+            results = model(
+                img_win,
+                points=points if points else None,
+                device="cpu",
+                retina_masks=True,
+                imgsz=imgsz,
+                conf=conf,
+                iou=iou,
+                verbose=False,
+            )
+        except Exception as e:
+                st.error(f"An error occurred during segmentation: {e}")
+                return None
+
 
     res = results[0]
     if res.masks is None:
@@ -194,8 +236,15 @@ def create_segmentation_geojson(
                 polygons.append(shape(geom_dict))
 
     gdf = gpd.GeoDataFrame(geometry=polygons, crs=crs)
-
+    
     gdf = gdf[gdf.is_valid]
+    gdf["area"] = gdf.geometry.area
+    #gdf = gdf[gdf["area"] < 10e6]
+    
+    #gdf = gdf.dissolve()  # Dissolve polygons before exploding
+    gdf = gdf.explode(index_parts=False)  # Explode multipart geometries
+    gdf["area"] = gdf.geometry.area  # Add an area column
+    gdf = gdf[gdf["area"] >= 1000]  # Delete parts with area < 900
 
     return gdf
 
@@ -293,7 +342,6 @@ if st.session_state.get("out", False):
 
 
 with st.sidebar:
-    st.header("Controls")
     st.selectbox(
         label="Model to use",
         options=("FastSAM", "MobileSAM", "SAM2-t"),
@@ -306,10 +354,10 @@ with st.sidebar:
             st.session_state["no_masks"] = None
         st.selectbox(
             "Input image size",
-            (128, 256, 512, 1024, 2048),
+            (256, 512, 768, 1024),
             index=2,
             key="imgsz",
-            help="Size to resize the image for segmentation",
+            help="Only applied for FastSAM. Size to resize the image for segmentation.",
         )
         st.slider(
             "Confidence threshold",
@@ -333,7 +381,7 @@ with st.sidebar:
         "Create Predictions",
         on_click=trigger_segmentation,
         disabled=st.session_state["predict_disabled"],
-        help="Run the specified segmentation model for markers or current extent",
+        help="Run the specified segmentation model. Must be zoomed in to 14 or 15",
     )
     st.button(
         "Delete Drawn Features",
@@ -354,8 +402,13 @@ with st.sidebar:
             mime="application/geo+json",
         )
     if st.session_state.get("out", False):
-        st.write(st.session_state["out"]["zoom"])
-
+        props = st.session_state["out"]
+        zoom = props["zoom"]
+        lat = props['center']['lat']
+        lng = props['center']['lng']
+        st.caption(f"Zoom Level: {zoom}")   
+        st.caption(f"Centre: {lat:.3f}, {lng:.3f}")
+        
 
 if st.session_state.get("out", False):
     if (
@@ -363,8 +416,9 @@ if st.session_state.get("out", False):
         and st.session_state["segmentation_run"]
         and current_zoom >= 14
     ):
-        print("imgsz", st.session_state["imgsz"])
         mapped_points = st.session_state["points"]
+        mapped_rectangles = st.session_state["rectangles"]
+        print(mapped_rectangles)
         with st.spinner(
             f"Generating {st.session_state["model_name"]} predictions...",
             show_time=True,
@@ -372,6 +426,7 @@ if st.session_state.get("out", False):
             gdf = create_segmentation_geojson(
                 TIF_PATH,
                 mapped_points,
+                mapped_rectangles,
                 st.session_state["model_name"],
                 imgsz=st.session_state["imgsz"],
                 conf=st.session_state["conf"],
@@ -398,7 +453,7 @@ if "zoom" not in st.session_state:
     st.session_state["zoom"] = 14
 
 if "center" not in st.session_state:
-    st.session_state["center"] = [55.967, -2.5199]
+    st.session_state["center"] = [56.020, -2.754]
 
 
 # PREDICTIONS LAYER
@@ -472,4 +527,5 @@ out = st_folium(
     key="out",
     height=600,
     width=900,
+    pixelated=True,
 )
