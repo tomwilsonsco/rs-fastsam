@@ -1,17 +1,16 @@
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
-from folium.plugins import Draw, FeatureGroupSubGroup
+from folium.plugins import Draw
 import rasterio as rio
 from pathlib import Path
-from rasterio.windows import bounds, from_bounds, transform as window_transform
+from rasterio.windows import from_bounds, transform as window_transform
 from rasterio.features import shapes
 from shapely.geometry import shape
-from rasterio.warp import transform_bounds
 from ultralytics import FastSAM, SAM
 import numpy as np
 import geopandas as gpd
-from pyproj import Transformer
+import pandas as pd
 from shapely.geometry import box, Point, Polygon
 
 # → Page config
@@ -45,7 +44,7 @@ with st.expander("❓ How to use"):
 
 TIF_PATH = (
     Path("data")
-    / "nir_8bit.tif"#"S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
+    / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped_sharp_rs.tif"  # "nir_8bit_sharpened.tif"#"S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
 )
 
 IMGSZ_DEFAULT = 512
@@ -57,12 +56,19 @@ if "initialized" not in st.session_state:
     st.session_state["segmentation_run"] = False
     st.session_state["initialized"] = True
     st.session_state["points"] = []
+    st.session_state["labels"] = []
     st.session_state["rectangles"] = []
     st.session_state["map"] = None
     st.session_state["predict_disabled"] = False
     st.session_state["imgsz"] = IMGSZ_DEFAULT
     st.session_state["conf"] = CONF_DEFAULT
     st.session_state["iou"] = IOU_DEFAULT
+
+
+def get_crs(tif_path):
+    with rio.open(tif_path) as f:
+        prof = f.profile
+        return prof["crs"]
 
 
 def to_pixel_coordinates(coordinates, crs, win_trans):
@@ -93,10 +99,11 @@ def to_pixel_coordinates(coordinates, crs, win_trans):
     pixel_coords = []
     for i, gdf_row in gdf.iterrows():
         x, y = gdf_row.geometry.x, gdf_row.geometry.y
-        if  minx <= x <= maxx and miny <= y <= maxy:
+        if minx <= x <= maxx and miny <= y <= maxy:
             row, col = rio.transform.rowcol(win_trans, x, y, op=round)
             pixel_coords.append([int(col), int(row)])
     return pixel_coords
+
 
 def get_current_extent():
     minx = st.session_state["out"]["bounds"]["_southWest"]["lng"]
@@ -105,20 +112,26 @@ def get_current_extent():
     maxy = st.session_state["out"]["bounds"]["_northEast"]["lat"]
     return minx, miny, maxx, maxy
 
+
 def extent_to_gdf():
     minx, miny, maxx, maxy = get_current_extent()
     bbox = box(minx, miny, maxx, maxy)
     return gpd.GeoDataFrame(geometry=[bbox], crs="epsg:4326")
 
 
-def get_window_array(tif_path):
+def get_window_array(tif_path, bbox_gdf=None):
 
     with rio.open(tif_path) as f:
         profile = f.profile
 
-    bbox = extent_to_gdf()
-    bbox = bbox.to_crs(profile["crs"])
-    minx, miny, maxx, maxy = bbox.bounds.iloc[0].to_list()
+    if not isinstance(bbox_gdf, gpd.GeoDataFrame):
+        use_gdf = extent_to_gdf()  
+    else:
+        use_gdf = bbox_gdf      
+    
+    use_gdf = use_gdf.to_crs(profile["crs"])
+    minx, miny, maxx, maxy = use_gdf.bounds.iloc[0].to_list()
+    minx, miny, maxx, maxy = minx, miny, maxx, maxy
     win = from_bounds(minx, miny, maxx, maxy, profile["transform"])
 
     with rio.open(tif_path) as f:
@@ -127,13 +140,18 @@ def get_window_array(tif_path):
 
     win_trans = window_transform(win, profile["transform"])
 
-    return win_arr, profile["crs"], win_trans
+    return win_arr, win_trans
 
-def convert_boxes(boxes, crs, win_trans):
+
+def convert_boxes(boxes, crs):
     minx, miny, maxx, maxy = get_current_extent()
     buffer_threshold = 0.0001
-    extent_bbox = box(minx + buffer_threshold, miny + buffer_threshold, maxx - buffer_threshold, maxy - buffer_threshold)
-    extent_gdf = gpd.GeoDataFrame(geometry=[extent_bbox], crs="epsg:4326").to_crs(crs)
+    extent_bbox = box(
+        minx + buffer_threshold,
+        miny + buffer_threshold,
+        maxx - buffer_threshold,
+        maxy - buffer_threshold,
+    )
     drawn_bboxes = [tuple(Polygon(poly[0]).bounds) for poly in boxes]
     results = []
     for rect in drawn_bboxes:
@@ -141,23 +159,96 @@ def convert_boxes(boxes, crs, win_trans):
         if rect_box.intersects(extent_bbox):
             clipped = rect_box.intersection(extent_bbox)
             if not clipped.is_empty:
-                coords =  list(clipped.bounds)
-                bl = to_pixel_coordinates([[coords[0], coords[1]]], crs, win_trans)
-                tr = to_pixel_coordinates([[coords[2], coords[3]]], crs, win_trans)
-                # expects (x1, y1) is the top-left corner, (x2, y2) the bottom-right
-                if bl and tr:
-                    bl = bl[0]
-                    tr = tr[0]
-                    tl = [bl[0], tr[1]] 
-                    br = [tr[0], bl[1]]
-                    results.append([tl[0], tl[1], br[0], br[1]])   
-    return results
+                results.append(clipped)
+    results_gdf = gpd.GeoDataFrame(geometry=results, crs="epsg:4326").to_crs(crs)
+    return results_gdf
 
 
+def predict_extent(
+    img_win, win_trans, crs, points, labels, use_model, imgsz, conf, iou
+):
+
+    points = to_pixel_coordinates(points, crs, win_trans)
+
+    if img_win is None or not img_win.any():
+        return None
+    # Load model and run inference
+    if use_model == "FastSAM":
+        model = FastSAM("FastSAM-x.pt")
+        imgsz = imgsz
+    elif use_model == "MobileSAM":
+        model = SAM("mobile_sam.pt")
+        imgsz = imgsz
+    elif use_model == "SAM2-t":
+        model = SAM("sam2_s.pt")
+        imgsz = imgsz
+    else:
+        raise ValueError(
+            f"Invalid model name: {use_model}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
+        )
+    try:
+        results = model.predict(
+            img_win,
+            points=points if points else None,
+            labels=labels,
+            device="cpu",
+            retina_masks=True,
+            imgsz=imgsz,
+            conf=conf,
+            iou=iou,
+            verbose=True,
+            max_det=1200,
+        )
+    except Exception as e:
+        st.error(f"An error occurred during segmentation: {e}")
+        return None
+
+    res = results[0]
+    if res.masks is None:
+        return None
+    else:
+        return res.masks.data.cpu().numpy()
+
+
+def masks_to_geodataframe(masks, transform, crs, min_area=1000):
+    """
+    Convert segmentation masks to a GeoDataFrame of polygons.
+
+    Parameters:
+    masks (numpy.ndarray): Array of segmentation masks.
+    transform (Affine): Affine transformation for the raster.
+    crs (str): Coordinate reference system for the GeoDataFrame.
+    min_area (float): Minimum area threshold for polygons to be included.
+
+    Returns:
+    geopandas.GeoDataFrame: GeoDataFrame containing valid polygons.
+    """
+    polygons = []
+    for mask in masks:
+        m = mask.astype("uint8")
+        for geom_dict, val in shapes(m, transform=transform):
+            if val == 1:
+                polygons.append(shape(geom_dict))
+
+    gdf = gpd.GeoDataFrame(geometry=polygons, crs=crs)
+    gdf = gdf[gdf.is_valid]
+    gdf["area"] = gdf.geometry.area
+    gdf = gdf.explode(index_parts=False)
+    gdf["area"] = gdf.geometry.area
+    gdf = gdf[gdf["area"] >= min_area]
+
+    return gdf
 
 
 def create_segmentation_geojson(
-    tif_path, points=None, boxes=None, use_model="FastSAM", imgsz=1024, conf=0.2, iou=0.5
+    tif_path,
+    points=None,
+    boxes=None,
+    labels=None,
+    use_model="FastSAM",
+    imgsz=1024,
+    conf=0.2,
+    iou=0.5,
 ):
     """
     Run segmentation on the TIFF image, convert masks to polygon geometries,
@@ -168,83 +259,35 @@ def create_segmentation_geojson(
     output_geojson_path (str): Output path for the GeoJSON file.
     coords (list, optional): Optional points for interactive segmentation.
     """
-    img_win, use_crs, win_trans = get_window_array(tif_path)
-    points = to_pixel_coordinates(points, use_crs, win_trans)
-    boxes = convert_boxes(boxes, use_crs, win_trans)
-    if img_win is None or not img_win.any():
-        return None
-    # Load model and run inference
-    if use_model == "FastSAM":
-        model = FastSAM("FastSAM-x.pt")
-        imgsz = imgsz
-    elif use_model == "MobileSAM":
-        model = SAM("mobile_sam.pt")
-        imgsz = 1024
-    elif use_model == "SAM2-t":
-        model = SAM("sam2_t.pt")
-        imgsz = 1024
-    else:
-        raise ValueError(
-            f"Invalid model name: {use_model}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
-        )
+    crs = get_crs(tif_path)
+
+    box_process = False
+
     if boxes:
-        try:
-            results = model(
-            img_win,
-            points=points if points else None,
-            bboxes=boxes,
-            device="cpu",
-            retina_masks=True,
-            imgsz=imgsz,
-            conf=conf,
-            iou=iou,
-            verbose=False,
-            )
-        except Exception as e:
-            st.error(f"An error occurred during segmentation: {e}")
-            return None
-    else:
-        try:
-            results = model(
-                img_win,
-                points=points if points else None,
-                device="cpu",
-                retina_masks=True,
-                imgsz=imgsz,
-                conf=conf,
-                iou=iou,
-                verbose=False,
-            )
-        except Exception as e:
-                st.error(f"An error occurred during segmentation: {e}")
-                return None
+        box_process = True
+        boxes_gdf = convert_boxes(boxes, crs)
+        if not boxes_gdf.empty:
+            gdfs = [gpd.GeoDataFrame([])]
+            for i in range(len(boxes_gdf)):
+                b = boxes_gdf.iloc[[i]]
+                img_win, win_trans = get_window_array(tif_path, b)
+                m = predict_extent(
+                    img_win, win_trans, crs, points, labels, use_model, imgsz, conf, iou
+                )
+                if m is not None:
+                    m_gdf = masks_to_geodataframe(m, win_trans, crs)
+                    if not m_gdf.empty:
+                        gdfs.append(m_gdf)
+            gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True))
+        else:
+            box_process = False
 
-
-    res = results[0]
-    if res.masks is None:
-        return None
-    masks = res.masks.data.cpu().numpy()
-
-    transform = win_trans
-    crs = use_crs
-
-    polygons = []
-    for mask in masks:
-        m = mask.astype("uint8")
-        for geom_dict, val in shapes(m, transform=transform):
-            if val == 1:  # only foreground
-                polygons.append(shape(geom_dict))
-
-    gdf = gpd.GeoDataFrame(geometry=polygons, crs=crs)
-    
-    gdf = gdf[gdf.is_valid]
-    gdf["area"] = gdf.geometry.area
-    #gdf = gdf[gdf["area"] < 10e6]
-    
-    #gdf = gdf.dissolve()  # Dissolve polygons before exploding
-    gdf = gdf.explode(index_parts=False)  # Explode multipart geometries
-    gdf["area"] = gdf.geometry.area  # Add an area column
-    gdf = gdf[gdf["area"] >= 1000]  # Delete parts with area < 900
+    if not box_process:
+        img_win, win_trans = get_window_array(tif_path)
+        masks = predict_extent(
+            img_win, win_trans, crs, points, labels, use_model, imgsz, conf, iou
+        )
+        gdf = masks_to_geodataframe(masks, win_trans, crs)
 
     return gdf
 
@@ -319,6 +362,7 @@ def delete_features():
     st.session_state["no_masks"] = False
     st.session_state["points"] = []
     st.session_state["rectangles"] = []
+    st.session_state["labels"] = []
     if st.session_state["out"].get("center", False):
         clean_center = [
             st.session_state["out"]["center"]["lat"] + 0.0001,
@@ -354,7 +398,7 @@ with st.sidebar:
             st.session_state["no_masks"] = None
         st.selectbox(
             "Input image size",
-            (256, 512, 768, 1024),
+            (256, 512, 640, 768, 1024),
             index=2,
             key="imgsz",
             help="Only applied for FastSAM. Size to resize the image for segmentation.",
@@ -386,7 +430,7 @@ with st.sidebar:
     st.button(
         "Delete Drawn Features",
         on_click=delete_features,
-        help="Delete all points you have drawn.",
+        help="Delete all points and rectangles you have drawn.",
     )
     st.button(
         "Delete Predictions",
@@ -401,14 +445,15 @@ with st.sidebar:
             file_name="seg_preds.geojson",
             mime="application/geo+json",
         )
+    st.radio("Marker type", ["Foreground", "Background"], key="fore_or_back")
     if st.session_state.get("out", False):
         props = st.session_state["out"]
         zoom = props["zoom"]
-        lat = props['center']['lat']
-        lng = props['center']['lng']
-        st.caption(f"Zoom Level: {zoom}")   
+        lat = props["center"]["lat"]
+        lng = props["center"]["lng"]
+        st.caption(f"Zoom Level: {zoom}")
         st.caption(f"Centre: {lat:.3f}, {lng:.3f}")
-        
+
 
 if st.session_state.get("out", False):
     if (
@@ -418,7 +463,6 @@ if st.session_state.get("out", False):
     ):
         mapped_points = st.session_state["points"]
         mapped_rectangles = st.session_state["rectangles"]
-        print(mapped_rectangles)
         with st.spinner(
             f"Generating {st.session_state["model_name"]} predictions...",
             show_time=True,
@@ -427,6 +471,7 @@ if st.session_state.get("out", False):
                 TIF_PATH,
                 mapped_points,
                 mapped_rectangles,
+                st.session_state["labels"],
                 st.session_state["model_name"],
                 imgsz=st.session_state["imgsz"],
                 conf=st.session_state["conf"],
@@ -519,6 +564,26 @@ draw.add_to(m)
 
 folium.LayerControl().add_to(m)
 
+
+def point_labels():
+    if st.session_state.get("out", False):
+        f_or_g = {"Foreground": 1, "Background": 0}
+        current_drawings = st.session_state["out"]["all_drawings"]
+        if current_drawings:
+            all_points = [
+                p["geometry"]["coordinates"]
+                for p in current_drawings
+                if p["geometry"]["type"] == "Point"
+            ]
+            all_labels = st.session_state["labels"]
+            if len(all_labels) < len(all_points):
+                current_type = st.session_state["fore_or_back"]
+                all_labels.append(f_or_g[current_type])
+                st.session_state["labels"] = all_labels
+
+
+print(st.session_state["labels"])
+
 out = st_folium(
     m,
     center=st.session_state["center"],
@@ -528,4 +593,5 @@ out = st_folium(
     height=600,
     width=900,
     pixelated=True,
+    on_change=point_labels,
 )
