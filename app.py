@@ -141,7 +141,7 @@ def get_window_array(tif_path, bbox_gdf=None):
 
     win_trans = window_transform(win, profile["transform"])
 
-    return win_arr, win_trans
+    return win_arr, win_trans, use_gdf
 
 
 def convert_boxes(boxes, crs):
@@ -211,7 +211,7 @@ def predict_extent(
         return res.masks.data.cpu().numpy()
 
 
-def masks_to_geodataframe(masks, transform, crs, min_area=1000):
+def masks_to_geodataframe(masks, transform, crs, box_area, min_area=1000):
     """
     Convert segmentation masks to a GeoDataFrame of polygons.
 
@@ -237,7 +237,10 @@ def masks_to_geodataframe(masks, transform, crs, min_area=1000):
     gdf = gdf.explode(index_parts=False)
     gdf["area"] = gdf.geometry.area
     gdf = gdf[gdf["area"] >= min_area]
-
+    gdf["relative_area"] = gdf["area"] / box_area.iloc[0]
+    gdf = gdf[gdf["relative_area"] < 0.9]
+    gdf = gdf.drop(columns=["relative_area"])
+    gdf["area_disp"] = gdf["area"].div(10000).round(2).astype(str) + " ha"
     return gdf
 
 
@@ -271,12 +274,13 @@ def create_segmentation_geojson(
             gdfs = [gpd.GeoDataFrame([])]
             for i in range(len(boxes_gdf)):
                 b = boxes_gdf.iloc[[i]]
-                img_win, win_trans = get_window_array(tif_path, b)
+                box_area = b.geometry.area
+                img_win, win_trans, _ = get_window_array(tif_path, b)
                 m = predict_extent(
                     img_win, win_trans, crs, points, labels, use_model, imgsz, conf, iou
                 )
                 if m is not None:
-                    m_gdf = masks_to_geodataframe(m, win_trans, crs)
+                    m_gdf = masks_to_geodataframe(m, win_trans, crs, box_area)
                     if not m_gdf.empty:
                         gdfs.append(m_gdf)
             gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True))
@@ -284,11 +288,13 @@ def create_segmentation_geojson(
             box_process = False
 
     if not box_process:
-        img_win, win_trans = get_window_array(tif_path)
+        img_win, win_trans, box_gdf = get_window_array(tif_path)
+        b = box_gdf.iloc[[0]]
+        box_area = b.geometry.area
         masks = predict_extent(
             img_win, win_trans, crs, points, labels, use_model, imgsz, conf, iou
         )
-        gdf = masks_to_geodataframe(masks, win_trans, crs)
+        gdf = masks_to_geodataframe(masks, win_trans, crs, box_area)
 
     return gdf
 
@@ -324,7 +330,6 @@ def trigger_segmentation():
     old_zoom = st.session_state["out"]["zoom"]
     st.session_state["center"] = old_center
     st.session_state["zoom"] = old_zoom
-    point_labels()
     current_drawings = st.session_state["out"]["all_drawings"]
     if current_drawings:
         all_points = [
@@ -440,17 +445,7 @@ with st.sidebar:
             file_name="seg_preds.geojson",
             mime="application/geo+json",
         )
-    def marker_type_label(i):
-        d={1: "Foreground", 0: "Background"}
-        return d[i]
-    st.segmented_control(
-    "Marker Type",
-    options=[1, 0],
-    default=1,
-    format_func=marker_type_label,
-    key="fore_or_back",
-    label_visibility="collapsed",
-    )
+
     if st.session_state.get("out", False):
         props = st.session_state["out"]
         zoom = props["zoom"]
@@ -476,7 +471,7 @@ if st.session_state.get("out", False):
                 TIF_PATH,
                 mapped_points,
                 mapped_rectangles,
-                st.session_state["labels"],
+                None,
                 st.session_state["model_name"],
                 imgsz=st.session_state["imgsz"],
                 conf=st.session_state["conf"],
@@ -514,8 +509,12 @@ if not st.session_state["gdf"].empty:
         folium.GeoJson(
             st.session_state["gdf"],
             name="Prediction Polygons",
-            color="red",
-            fill=False,
+            style_function=lambda feature: {
+                "fillColor": "red",
+                "color": "red",
+                "fillOpacity": 0,
+            },
+            tooltip=folium.GeoJsonTooltip(fields=["area_disp"], labels=True, aliases=[""], localize=True),
             overlay=True,
             control=True,
         )
@@ -564,44 +563,13 @@ draw = Draw(
         "marker": True,
     },
     edit_options={"edit": True, "remove": True},
-#     on={
-#     "add": JsCode(f"""
-#         function () {{
-#             // get the layer’s GeoJSON
-#             var gj = this.toGeoJSON();
-#             // make sure properties exists
-#             if (!gj.properties) {{ gj.properties = {{}}; }}
-#             // add the extra field coming from Streamlit
-#             gj.properties.tag = "{st.session_state}";
-#             // store it back so future toGeoJSON() calls include it
-#             this.feature = gj;
-#         }}
-#     """)
-# }
 )
 draw.add_to(m)
 
 folium.LayerControl().add_to(m)
 
-
-def point_labels():
-    if st.session_state.get("out", False):
-        #f_or_g = {"Foreground": 1, "Background": 0}
-        current_drawings = st.session_state["out"]["all_drawings"]
-        if current_drawings:
-            all_points = [
-                p["geometry"]["coordinates"]
-                for p in current_drawings
-                if p["geometry"]["type"] == "Point"
-            ]
-            all_labels = st.session_state["labels"]
-            if len(all_labels) < len(all_points):
-                current_type = st.session_state["fore_or_back"]
-                all_labels.append(current_type)
-                st.session_state["labels"] = all_labels
-
-
-print(st.session_state["labels"])
+if st.session_state.get("out", False):
+    print(st.session_state["out"]["all_drawings"])
 
 out = st_folium(
     m,
@@ -612,5 +580,4 @@ out = st_folium(
     height=600,
     width=900,
     pixelated=True,
-    on_change=point_labels,
 )
