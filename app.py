@@ -2,6 +2,7 @@ import streamlit as st
 from streamlit_folium import st_folium
 import folium
 from folium.plugins import Draw
+from folium.utilities import JsCode
 import rasterio as rio
 from pathlib import Path
 from rasterio.windows import from_bounds, transform as window_transform
@@ -125,10 +126,10 @@ def get_window_array(tif_path, bbox_gdf=None):
         profile = f.profile
 
     if not isinstance(bbox_gdf, gpd.GeoDataFrame):
-        use_gdf = extent_to_gdf()  
+        use_gdf = extent_to_gdf()
     else:
-        use_gdf = bbox_gdf      
-    
+        use_gdf = bbox_gdf
+
     use_gdf = use_gdf.to_crs(profile["crs"])
     minx, miny, maxx, maxy = use_gdf.bounds.iloc[0].to_list()
     minx, miny, maxx, maxy = minx, miny, maxx, maxy
@@ -317,12 +318,13 @@ def trigger_segmentation():
     st.session_state["segmentation_run"] = True
     st.session_state["no_masks"] = None
     old_center = [
-        st.session_state["out"]["center"]["lat"],
-        st.session_state["out"]["center"]["lng"],
+        st.session_state["out"]["center"]["lat"] + 0.0001,
+        st.session_state["out"]["center"]["lng"] + 0.0001,
     ]
     old_zoom = st.session_state["out"]["zoom"]
     st.session_state["center"] = old_center
     st.session_state["zoom"] = old_zoom
+    point_labels()
     current_drawings = st.session_state["out"]["all_drawings"]
     if current_drawings:
         all_points = [
@@ -337,6 +339,9 @@ def trigger_segmentation():
             if p["geometry"]["type"] == "Polygon"
         ]
         st.session_state["rectangles"] = all_rectangles
+    else:
+        st.session_state["points"] = []
+        st.session_state["rectangles"] = []
 
 
 def clear_segmentation():
@@ -359,10 +364,6 @@ def reset_params():
 
 
 def delete_features():
-    st.session_state["no_masks"] = False
-    st.session_state["points"] = []
-    st.session_state["rectangles"] = []
-    st.session_state["labels"] = []
     if st.session_state["out"].get("center", False):
         clean_center = [
             st.session_state["out"]["center"]["lat"] + 0.0001,
@@ -371,6 +372,10 @@ def delete_features():
         clean_zoom = st.session_state["out"]["zoom"]
         st.session_state["center"] = clean_center
         st.session_state["zoom"] = clean_zoom
+    st.session_state["no_masks"] = False
+    st.session_state["points"] = []
+    st.session_state["rectangles"] = []
+    st.session_state["labels"] = []
 
 
 def download_polys(gdf):
@@ -392,7 +397,7 @@ with st.sidebar:
         placeholder="FastSAM",
         key="model_name",
     )
-    with st.expander("Segmentation parameters", expanded=False):
+    with st.expander("Prediction parameters", expanded=False):
         if st.button("Reset parameters"):
             reset_params()
             st.session_state["no_masks"] = None
@@ -427,16 +432,6 @@ with st.sidebar:
         disabled=st.session_state["predict_disabled"],
         help="Run the specified segmentation model. Must be zoomed in to 14 or 15",
     )
-    st.button(
-        "Delete Drawn Features",
-        on_click=delete_features,
-        help="Delete all points and rectangles you have drawn.",
-    )
-    st.button(
-        "Delete Predictions",
-        on_click=clear_segmentation,
-        help="Clear segmentation prediction polygons.",
-    )
     if not st.session_state.get("gdf").empty:
         geojson_str = st.session_state["gdf"].to_json()
         st.sidebar.download_button(
@@ -445,7 +440,17 @@ with st.sidebar:
             file_name="seg_preds.geojson",
             mime="application/geo+json",
         )
-    st.radio("Marker type", ["Foreground", "Background"], key="fore_or_back")
+    def marker_type_label(i):
+        d={1: "Foreground", 0: "Background"}
+        return d[i]
+    st.segmented_control(
+    "Marker Type",
+    options=[1, 0],
+    default=1,
+    format_func=marker_type_label,
+    key="fore_or_back",
+    label_visibility="collapsed",
+    )
     if st.session_state.get("out", False):
         props = st.session_state["out"]
         zoom = props["zoom"]
@@ -558,7 +563,21 @@ draw = Draw(
         "circlemarker": False,
         "marker": True,
     },
-    edit_options={"edit": False, "remove": False},
+    edit_options={"edit": True, "remove": True},
+#     on={
+#     "add": JsCode(f"""
+#         function () {{
+#             // get the layer’s GeoJSON
+#             var gj = this.toGeoJSON();
+#             // make sure properties exists
+#             if (!gj.properties) {{ gj.properties = {{}}; }}
+#             // add the extra field coming from Streamlit
+#             gj.properties.tag = "{st.session_state}";
+#             // store it back so future toGeoJSON() calls include it
+#             this.feature = gj;
+#         }}
+#     """)
+# }
 )
 draw.add_to(m)
 
@@ -567,7 +586,7 @@ folium.LayerControl().add_to(m)
 
 def point_labels():
     if st.session_state.get("out", False):
-        f_or_g = {"Foreground": 1, "Background": 0}
+        #f_or_g = {"Foreground": 1, "Background": 0}
         current_drawings = st.session_state["out"]["all_drawings"]
         if current_drawings:
             all_points = [
@@ -578,7 +597,7 @@ def point_labels():
             all_labels = st.session_state["labels"]
             if len(all_labels) < len(all_points):
                 current_type = st.session_state["fore_or_back"]
-                all_labels.append(f_or_g[current_type])
+                all_labels.append(current_type)
                 st.session_state["labels"] = all_labels
 
 
