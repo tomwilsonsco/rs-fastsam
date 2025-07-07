@@ -72,7 +72,7 @@ def get_crs(tif_path):
         return prof["crs"]
 
 
-def to_pixel_coordinates(coordinates, crs, win_trans):
+def to_pixel_coordinates(points_gdf, crs, win_trans):
     """Convert list of [lon, lat] coordinates to pixel coordinates.
 
     For each [lon, lat] coordinate:
@@ -83,22 +83,14 @@ def to_pixel_coordinates(coordinates, crs, win_trans):
     Returns a list of [col, row] pixel coordinates.
     """
 
-    if not coordinates:
-        return None
-
-    gdf = gpd.GeoDataFrame(
-        geometry=[Point(lon, lat) for lon, lat in coordinates],
-        crs="EPSG:4326",
-    )
-
-    gdf = gdf.to_crs(crs)
+    points_gdf = points_gdf.to_crs(crs)
 
     bbox = extent_to_gdf().to_crs(crs)
 
     minx, miny, maxx, maxy = bbox.bounds.iloc[0].to_list()
 
     pixel_coords = []
-    for i, gdf_row in gdf.iterrows():
+    for i, gdf_row in points_gdf.iterrows():
         x, y = gdf_row.geometry.x, gdf_row.geometry.y
         if minx <= x <= maxx and miny <= y <= maxy:
             row, col = rio.transform.rowcol(win_trans, x, y, op=round)
@@ -132,7 +124,6 @@ def get_window_array(tif_path, bbox_gdf=None):
 
     use_gdf = use_gdf.to_crs(profile["crs"])
     minx, miny, maxx, maxy = use_gdf.bounds.iloc[0].to_list()
-    minx, miny, maxx, maxy = minx, miny, maxx, maxy
     win = from_bounds(minx, miny, maxx, maxy, profile["transform"])
 
     with rio.open(tif_path) as f:
@@ -144,7 +135,7 @@ def get_window_array(tif_path, bbox_gdf=None):
     return win_arr, win_trans, use_gdf
 
 
-def convert_boxes(boxes, crs):
+def validate_boxes(boxes_gdf):
     minx, miny, maxx, maxy = get_current_extent()
     buffer_threshold = 0.0001
     extent_bbox = box(
@@ -153,16 +144,12 @@ def convert_boxes(boxes, crs):
         maxx - buffer_threshold,
         maxy - buffer_threshold,
     )
-    drawn_bboxes = [tuple(Polygon(poly[0]).bounds) for poly in boxes]
-    results = []
-    for rect in drawn_bboxes:
-        rect_box = box(*rect)
-        if rect_box.intersects(extent_bbox):
-            clipped = rect_box.intersection(extent_bbox)
-            if not clipped.is_empty:
-                results.append(clipped)
-    results_gdf = gpd.GeoDataFrame(geometry=results, crs="epsg:4326").to_crs(crs)
-    return results_gdf
+    boxes_gdf["geometry"] = boxes_gdf["geometry"].intersection(extent_bbox)
+
+    # Filter to keep only valid and non-empty geometries
+    boxes_gdf= boxes_gdf[boxes_gdf["geometry"].is_valid & ~boxes_gdf["geometry"].is_empty]
+
+    return boxes_gdf
 
 
 def predict_extent(
@@ -243,11 +230,38 @@ def masks_to_geodataframe(masks, transform, crs, box_area, min_area=1000):
     gdf["area_disp"] = gdf["area"].div(10000).round(2).astype(str) + " ha"
     return gdf
 
+def extract_features(features):
+    """
+    Split a list of GeoJSON features into two GeoDataFrames:
+    one containing only polygons and one containing only points.
+
+    Parameters:
+    features (list): List of GeoJSON features (dicts).
+
+    Returns:
+    tuple: (polygon_gdf, point_gdf)
+    """
+    polygon_geoms = []
+    point_geoms = []
+
+    for feat in features:
+        if not feat or "geometry" not in feat:
+            continue
+        geom = shape(feat["geometry"])
+        if geom.geom_type == "Polygon":
+            polygon_geoms.append(geom)
+        elif geom.geom_type == "Point":
+            point_geoms.append(geom)
+
+    poly_gdf = gpd.GeoDataFrame(geometry=polygon_geoms, crs="EPSG:4326")
+    point_gdf = gpd.GeoDataFrame(geometry=point_geoms, crs="EPSG:4326")
+
+    return point_gdf, poly_gdf
+
 
 def create_segmentation_geojson(
     tif_path,
-    points=None,
-    boxes=None,
+    features,
     labels=None,
     use_model="FastSAM",
     imgsz=1024,
@@ -265,19 +279,22 @@ def create_segmentation_geojson(
     """
     crs = get_crs(tif_path)
 
+    point_gdf, boxes_gdf = extract_features(features)
+
     box_process = False
 
-    if boxes:
+    if not boxes_gdf.empty:
         box_process = True
-        boxes_gdf = convert_boxes(boxes, crs)
+        boxes_gdf = validate_boxes(boxes_gdf)
         if not boxes_gdf.empty:
             gdfs = [gpd.GeoDataFrame([])]
             for i in range(len(boxes_gdf)):
                 b = boxes_gdf.iloc[[i]]
                 box_area = b.geometry.area
-                img_win, win_trans, _ = get_window_array(tif_path, b)
+                img_win, win_trans, b_in_crs = get_window_array(tif_path, b)
+                box_area = b_in_crs.geometry.area
                 m = predict_extent(
-                    img_win, win_trans, crs, points, labels, use_model, imgsz, conf, iou
+                    img_win, win_trans, crs, point_gdf, labels, use_model, imgsz, conf, iou
                 )
                 if m is not None:
                     m_gdf = masks_to_geodataframe(m, win_trans, crs, box_area)
@@ -292,7 +309,7 @@ def create_segmentation_geojson(
         b = box_gdf.iloc[[0]]
         box_area = b.geometry.area
         masks = predict_extent(
-            img_win, win_trans, crs, points, labels, use_model, imgsz, conf, iou
+            img_win, win_trans, crs, point_gdf, labels, use_model, imgsz, conf, iou
         )
         gdf = masks_to_geodataframe(masks, win_trans, crs, box_area)
 
@@ -335,18 +352,19 @@ def trigger_segmentation():
     # Therefore current_drawings is Not None current works to achieve this
     current_drawings = st.session_state["out"]["all_drawings"]
     if current_drawings is not None:
-        all_points = [
-            p["geometry"]["coordinates"]
-            for p in current_drawings
-            if p["geometry"]["type"] == "Point"
-        ]
-        st.session_state["points"] = all_points
-        all_rectangles = [
-            p["geometry"]["coordinates"]
-            for p in current_drawings
-            if p["geometry"]["type"] == "Polygon"
-        ]
-        st.session_state["rectangles"] = all_rectangles
+          st.session_state["draw_features"] = current_drawings
+    #     all_points = [
+    #         p["geometry"]["coordinates"]
+    #         for p in current_drawings
+    #         if p["geometry"]["type"] == "Point"
+    #     ]
+    #     st.session_state["points"] = all_points
+    #     all_rectangles = [
+    #         p["geometry"]["coordinates"]
+    #         for p in current_drawings
+    #         if p["geometry"]["type"] == "Polygon"
+    #     ]
+    #     st.session_state["rectangles"] = all_rectangles
 
 
 def clear_segmentation():
@@ -461,16 +479,14 @@ if st.session_state.get("out", False):
         and st.session_state["segmentation_run"]
         and current_zoom >= 14
     ):
-        mapped_points = st.session_state["points"]
-        mapped_rectangles = st.session_state["rectangles"]
+        mapped_features = st.session_state["draw_features"]
         with st.spinner(
             f"Generating {st.session_state["model_name"]} predictions...",
             show_time=True,
         ):
             gdf = create_segmentation_geojson(
                 TIF_PATH,
-                mapped_points,
-                mapped_rectangles,
+                mapped_features,
                 None,
                 st.session_state["model_name"],
                 imgsz=st.session_state["imgsz"],
@@ -527,25 +543,31 @@ if not st.session_state["gdf"].empty:
 
 fg = folium.FeatureGroup(name="Drawing features", control=True)
 
+if st.session_state.get("draw_features", False):
+    for feature in st.session_state["draw_features"]:
+        # Use folium.GeoJson for all types of features for simplicity and consistency.
+        # The Draw plugin will correctly interpret these GeoJSON features.
+        folium.GeoJson(feature).add_to(fg)
 
-for point in st.session_state.get("points", None):
-    fg.add_child(
-        folium.Marker(location=[point[1], point[0]], name="point markers", control=True)
-    )
 
-# RECTANGLES LAYER
-for rect in st.session_state.get("rectangles", None):
-    rect = rect[0]
-    rect = [[lat, lon] for lon, lat in rect]
-    fg.add_child(
-        folium.Polygon(
-            locations=rect,
-            name="rectangle markers",
-            fill=True,
-            fill_opacity=0.2,
-            control=True,
-        )
-    )
+# for point in st.session_state.get("points", None):
+#     fg.add_child(
+#         folium.Marker(location=[point[1], point[0]], name="point markers", control=True)
+#     )
+
+# # RECTANGLES LAYER
+# for rect in st.session_state.get("rectangles", None):
+#     rect = rect[0]
+#     rect = [[lat, lon] for lon, lat in rect]
+#     fg.add_child(
+#         folium.Polygon(
+#             locations=rect,
+#             name="rectangle markers",
+#             fill=True,
+#             fill_opacity=0.2,
+#             control=True,
+#         )
+#     )
 
 m = create_map(st.session_state["center"], st.session_state["zoom"])
 
