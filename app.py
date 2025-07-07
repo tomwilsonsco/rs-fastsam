@@ -11,7 +11,7 @@ from src.rssam.predict import create_segmentation_geojson
 
 # → Page config
 st.set_page_config(
-    page_title="🛰️ Satellite Image Segmentation",
+    page_title="🛰️ Sentinel-2 Image Segmentation",
     layout="wide",
     initial_sidebar_state="expanded",
 )
