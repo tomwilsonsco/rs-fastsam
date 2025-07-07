@@ -18,7 +18,7 @@ st.set_page_config(
 with open("style.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-st.title("Satellite Image Segmentation")
+st.title(" 🛰️Segment Sentinel-2 Imagery")
 
 with st.expander("❓ How to use"):
     st.markdown(
@@ -53,9 +53,6 @@ if "initialized" not in st.session_state:
     st.session_state["gdf"] = gpd.GeoDataFrame([])
     st.session_state["segmentation_run"] = False
     st.session_state["initialized"] = True
-    st.session_state["points"] = []
-    st.session_state["labels"] = []
-    st.session_state["rectangles"] = []
     st.session_state["map"] = None
     st.session_state["predict_disabled"] = False
     st.session_state["upscale"] = UPSCALE_DEFAULT
@@ -180,12 +177,12 @@ if st.session_state.get("out", False):
 
 with st.sidebar:
     st.selectbox(
-        label="Model to use",
+        label="📊 Model to use",
         options=("FastSAM", "MobileSAM", "SAM2-t"),
         placeholder="FastSAM",
         key="model_name",
     )
-    with st.expander("Prediction parameters", expanded=False):
+    with st.expander("⚙️ Prediction Parameters", expanded=False):
         if st.button("Reset parameters"):
             reset_params()
             st.session_state["no_masks"] = None
@@ -238,7 +235,7 @@ with st.sidebar:
             Higher values mean fewer overlapping predictions are removed",
         )
     st.button(
-        "Create Predictions",
+        "⚡Run Segmentation",
         on_click=trigger_segmentation,
         disabled=st.session_state["predict_disabled"],
         help="Run the specified segmentation model. Must be zoomed in to 14 or 15",
@@ -246,7 +243,7 @@ with st.sidebar:
     if not st.session_state.get("gdf").empty:
         geojson_str = st.session_state["gdf"].to_json()
         st.sidebar.download_button(
-            "Download predictions",
+            "🗺️ Download prediction",
             data=geojson_str,
             file_name="seg_preds.geojson",
             mime="application/geo+json",
