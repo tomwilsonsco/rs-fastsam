@@ -105,6 +105,7 @@ def create_map(center, zoom_val):
         control=True,
         no_wrap=True,
         max_zoom=15,
+        detect_retina=False,
     ).add_to(m)
 
     return m
