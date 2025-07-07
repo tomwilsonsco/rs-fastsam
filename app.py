@@ -2,17 +2,11 @@ import streamlit as st
 from streamlit_folium import st_folium
 import folium
 from folium.plugins import Draw
-from folium.utilities import JsCode
-import rasterio as rio
 from pathlib import Path
-from rasterio.windows import from_bounds, transform as window_transform
-from rasterio.features import shapes
-from shapely.geometry import shape
-from ultralytics import FastSAM, SAM
-import numpy as np
 import geopandas as gpd
-import pandas as pd
-from shapely.geometry import box, Point, Polygon
+
+# internal import
+from src.rssam.predict import create_segmentation_geojson
 
 # → Page config
 st.set_page_config(
@@ -66,256 +60,6 @@ if "initialized" not in st.session_state:
     st.session_state["iou"] = IOU_DEFAULT
 
 
-def get_crs(tif_path):
-    with rio.open(tif_path) as f:
-        prof = f.profile
-        return prof["crs"]
-
-
-def to_pixel_coordinates(points_gdf, crs, win_trans):
-    """Convert list of [lon, lat] coordinates to pixel coordinates.
-
-    For each [lon, lat] coordinate:
-    - Convert from EPSG:4326 (WGS84) to the image CRS (profile['crs']).
-    - Convert world coordinates to pixel coordinates rasterio.transform.rowcol
-    - Exclude any points that fall outside the image bounds defined by profile['width'] and profile['height'].
-
-    Returns a list of [col, row] pixel coordinates.
-    """
-
-    points_gdf = points_gdf.to_crs(crs)
-
-    bbox = extent_to_gdf().to_crs(crs)
-
-    minx, miny, maxx, maxy = bbox.bounds.iloc[0].to_list()
-
-    pixel_coords = []
-    for i, gdf_row in points_gdf.iterrows():
-        x, y = gdf_row.geometry.x, gdf_row.geometry.y
-        if minx <= x <= maxx and miny <= y <= maxy:
-            row, col = rio.transform.rowcol(win_trans, x, y, op=round)
-            pixel_coords.append([int(col), int(row)])
-    return pixel_coords
-
-
-def get_current_extent():
-    minx = st.session_state["out"]["bounds"]["_southWest"]["lng"]
-    miny = st.session_state["out"]["bounds"]["_southWest"]["lat"]
-    maxx = st.session_state["out"]["bounds"]["_northEast"]["lng"]
-    maxy = st.session_state["out"]["bounds"]["_northEast"]["lat"]
-    return minx, miny, maxx, maxy
-
-
-def extent_to_gdf():
-    minx, miny, maxx, maxy = get_current_extent()
-    bbox = box(minx, miny, maxx, maxy)
-    return gpd.GeoDataFrame(geometry=[bbox], crs="epsg:4326")
-
-
-def get_window_array(tif_path, bbox_gdf=None):
-
-    with rio.open(tif_path) as f:
-        profile = f.profile
-
-    if not isinstance(bbox_gdf, gpd.GeoDataFrame):
-        use_gdf = extent_to_gdf()
-    else:
-        use_gdf = bbox_gdf
-
-    use_gdf = use_gdf.to_crs(profile["crs"])
-    minx, miny, maxx, maxy = use_gdf.bounds.iloc[0].to_list()
-    win = from_bounds(minx, miny, maxx, maxy, profile["transform"])
-
-    with rio.open(tif_path) as f:
-        win_arr = f.read(window=win)
-        win_arr = win_arr.transpose(1, 2, 0)
-
-    win_trans = window_transform(win, profile["transform"])
-
-    return win_arr, win_trans, use_gdf
-
-
-def validate_boxes(boxes_gdf):
-    minx, miny, maxx, maxy = get_current_extent()
-    buffer_threshold = 0.0001
-    extent_bbox = box(
-        minx + buffer_threshold,
-        miny + buffer_threshold,
-        maxx - buffer_threshold,
-        maxy - buffer_threshold,
-    )
-    boxes_gdf["geometry"] = boxes_gdf["geometry"].intersection(extent_bbox)
-
-    # Filter to keep only valid and non-empty geometries
-    boxes_gdf= boxes_gdf[boxes_gdf["geometry"].is_valid & ~boxes_gdf["geometry"].is_empty]
-
-    return boxes_gdf
-
-
-def predict_extent(
-    img_win, win_trans, crs, points, labels, use_model, imgsz, conf, iou
-):
-
-    points = to_pixel_coordinates(points, crs, win_trans)
-
-    if img_win is None or not img_win.any():
-        return None
-    # Load model and run inference
-    if use_model == "FastSAM":
-        model = FastSAM("FastSAM-x.pt")
-        imgsz = imgsz
-    elif use_model == "MobileSAM":
-        model = SAM("mobile_sam.pt")
-        imgsz = imgsz
-    elif use_model == "SAM2-t":
-        model = SAM("sam2_s.pt")
-        imgsz = imgsz
-    else:
-        raise ValueError(
-            f"Invalid model name: {use_model}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
-        )
-    try:
-        results = model.predict(
-            img_win,
-            points=points if points else None,
-            labels=labels,
-            device="cpu",
-            retina_masks=True,
-            imgsz=imgsz,
-            conf=conf,
-            iou=iou,
-            verbose=True,
-            max_det=1200,
-        )
-    except Exception as e:
-        st.error(f"An error occurred during segmentation: {e}")
-        return None
-
-    res = results[0]
-    if res.masks is None:
-        return None
-    else:
-        return res.masks.data.cpu().numpy()
-
-
-def masks_to_geodataframe(masks, transform, crs, box_area, min_area=1000):
-    """
-    Convert segmentation masks to a GeoDataFrame of polygons.
-
-    Parameters:
-    masks (numpy.ndarray): Array of segmentation masks.
-    transform (Affine): Affine transformation for the raster.
-    crs (str): Coordinate reference system for the GeoDataFrame.
-    min_area (float): Minimum area threshold for polygons to be included.
-
-    Returns:
-    geopandas.GeoDataFrame: GeoDataFrame containing valid polygons.
-    """
-    polygons = []
-    for mask in masks:
-        m = mask.astype("uint8")
-        for geom_dict, val in shapes(m, transform=transform):
-            if val == 1:
-                polygons.append(shape(geom_dict))
-
-    gdf = gpd.GeoDataFrame(geometry=polygons, crs=crs)
-    gdf = gdf[gdf.is_valid]
-    gdf["area"] = gdf.geometry.area
-    gdf = gdf.explode(index_parts=False)
-    gdf["area"] = gdf.geometry.area
-    gdf = gdf[gdf["area"] >= min_area]
-    gdf["relative_area"] = gdf["area"] / box_area.iloc[0]
-    gdf = gdf[gdf["relative_area"] < 0.9]
-    gdf = gdf.drop(columns=["relative_area"])
-    gdf["area_disp"] = gdf["area"].div(10000).round(2).astype(str) + " ha"
-    return gdf
-
-def extract_features(features):
-    """
-    Split a list of GeoJSON features into two GeoDataFrames:
-    one containing only polygons and one containing only points.
-
-    Parameters:
-    features (list): List of GeoJSON features (dicts).
-
-    Returns:
-    tuple: (polygon_gdf, point_gdf)
-    """
-    polygon_geoms = []
-    point_geoms = []
-
-    for feat in features:
-        if not feat or "geometry" not in feat:
-            continue
-        geom = shape(feat["geometry"])
-        if geom.geom_type == "Polygon":
-            polygon_geoms.append(geom)
-        elif geom.geom_type == "Point":
-            point_geoms.append(geom)
-
-    poly_gdf = gpd.GeoDataFrame(geometry=polygon_geoms, crs="EPSG:4326")
-    point_gdf = gpd.GeoDataFrame(geometry=point_geoms, crs="EPSG:4326")
-
-    return point_gdf, poly_gdf
-
-
-def create_segmentation_geojson(
-    tif_path,
-    features,
-    labels=None,
-    use_model="FastSAM",
-    imgsz=1024,
-    conf=0.2,
-    iou=0.5,
-):
-    """
-    Run segmentation on the TIFF image, convert masks to polygon geometries,
-    and save them as a GeoJSON file.
-
-    Parameters:
-    tif_path (str): Path to the TIFF image.
-    output_geojson_path (str): Output path for the GeoJSON file.
-    coords (list, optional): Optional points for interactive segmentation.
-    """
-    crs = get_crs(tif_path)
-
-    point_gdf, boxes_gdf = extract_features(features)
-
-    box_process = False
-
-    if not boxes_gdf.empty:
-        box_process = True
-        boxes_gdf = validate_boxes(boxes_gdf)
-        if not boxes_gdf.empty:
-            gdfs = [gpd.GeoDataFrame([])]
-            for i in range(len(boxes_gdf)):
-                b = boxes_gdf.iloc[[i]]
-                box_area = b.geometry.area
-                img_win, win_trans, b_in_crs = get_window_array(tif_path, b)
-                box_area = b_in_crs.geometry.area
-                m = predict_extent(
-                    img_win, win_trans, crs, point_gdf, labels, use_model, imgsz, conf, iou
-                )
-                if m is not None:
-                    m_gdf = masks_to_geodataframe(m, win_trans, crs, box_area)
-                    if not m_gdf.empty:
-                        gdfs.append(m_gdf)
-            gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True))
-        else:
-            box_process = False
-
-    if not box_process:
-        img_win, win_trans, box_gdf = get_window_array(tif_path)
-        b = box_gdf.iloc[[0]]
-        box_area = b.geometry.area
-        masks = predict_extent(
-            img_win, win_trans, crs, point_gdf, labels, use_model, imgsz, conf, iou
-        )
-        gdf = masks_to_geodataframe(masks, win_trans, crs, box_area)
-
-    return gdf
-
-
 def create_map(center, zoom_val):
     """
     Create a folium map with initial settings and return it.
@@ -352,7 +96,7 @@ def trigger_segmentation():
     # Therefore current_drawings is Not None current works to achieve this
     current_drawings = st.session_state["out"]["all_drawings"]
     if current_drawings is not None:
-          st.session_state["draw_features"] = current_drawings
+        st.session_state["draw_features"] = current_drawings
     #     all_points = [
     #         p["geometry"]["coordinates"]
     #         for p in current_drawings
@@ -479,7 +223,10 @@ if st.session_state.get("out", False):
         and st.session_state["segmentation_run"]
         and current_zoom >= 14
     ):
-        mapped_features = st.session_state["draw_features"]
+        if st.session_state.get("draw_features", False):
+            mapped_features = st.session_state["draw_features"]
+        else:
+            mapped_features = []
         with st.spinner(
             f"Generating {st.session_state["model_name"]} predictions...",
             show_time=True,
