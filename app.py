@@ -330,8 +330,11 @@ def trigger_segmentation():
     old_zoom = st.session_state["out"]["zoom"]
     st.session_state["center"] = old_center
     st.session_state["zoom"] = old_zoom
+    ## After running this once st.session_state["out"]["all_drawings"]
+    ## becomes None. If delete all features with draw edit tools becomes []
+    # Therefore current_drawings is Not None current works to achieve this
     current_drawings = st.session_state["out"]["all_drawings"]
-    if current_drawings:
+    if current_drawings is not None:
         all_points = [
             p["geometry"]["coordinates"]
             for p in current_drawings
@@ -344,9 +347,6 @@ def trigger_segmentation():
             if p["geometry"]["type"] == "Polygon"
         ]
         st.session_state["rectangles"] = all_rectangles
-    else:
-        st.session_state["points"] = []
-        st.session_state["rectangles"] = []
 
 
 def clear_segmentation():
@@ -514,7 +514,9 @@ if not st.session_state["gdf"].empty:
                 "color": "red",
                 "fillOpacity": 0,
             },
-            tooltip=folium.GeoJsonTooltip(fields=["area_disp"], labels=True, aliases=[""], localize=True),
+            tooltip=folium.GeoJsonTooltip(
+                fields=["area_disp"], labels=True, aliases=[""], localize=True
+            ),
             overlay=True,
             control=True,
         )
