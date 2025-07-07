@@ -8,4 +8,4 @@ ultralytics
 numpy
 opencv-python-headless
 geopandas
-pyproj
+pandas
