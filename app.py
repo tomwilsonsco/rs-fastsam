@@ -248,6 +248,8 @@ with st.sidebar:
             file_name="seg_preds.geojson",
             mime="application/geo+json",
         )
+        total_area = float(st.session_state["gdf"]["geometry"].area.sum()) / 10000
+        st.caption(f"Prediction area total: {total_area:.2f} ha")
 
     if st.session_state.get("out", False):
         props = st.session_state["out"]
