@@ -157,8 +157,7 @@ def predict_extent(
     win_trans: Affine,
     extent_gdf: gpd.GeoDataFrame,
     points: gpd.GeoDataFrame,
-    labels: Optional[List[int]],
-    use_model: str,
+    model: Union[FastSAM, SAM],
     imgsz: int,
     conf: float,
     iou: float,
@@ -171,8 +170,7 @@ def predict_extent(
         win_trans (Affine): Affine transform for the image window.
         extent_gdf (gpd.GeoDataFrame): GeoDataFrame defining the spatial extent of the window.
         points (gpd.GeoDataFrame): GeoDataFrame of input points for segmentation.
-        labels (Optional[List[int]]): List of binary labels associated with the points.
-        use_model (str): Model name to use for prediction ("FastSAM", "MobileSAM", or "SAM2-t").
+        model (Union[FastSAM, SAM]): Model to use for prediction ("FastSAM", "MobileSAM", or "SAM2-t").
         imgsz (int): Input image size for the model.
         conf (float): Confidence threshold for mask generation.
         iou (float): IoU threshold for mask filtering.
@@ -184,25 +182,11 @@ def predict_extent(
 
     if img_win is None or not img_win.any():
         return None
-    # Load model and run inference
-    if use_model == "FastSAM":
-        model = FastSAM("FastSAM-x.pt")
-        imgsz = imgsz
-    elif use_model == "MobileSAM":
-        model = SAM("mobile_sam.pt")
-        imgsz = imgsz
-    elif use_model == "SAM2-t":
-        model = SAM("sam2_s.pt")
-        imgsz = imgsz
-    else:
-        raise ValueError(
-            f"Invalid model name: {use_model}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
-        )
+
     try:
         results = model.predict(
             img_win,
             points=points if points else None,
-            labels=labels,
             device="cpu",
             retina_masks=True,
             imgsz=imgsz,
@@ -306,17 +290,17 @@ def prepare_inputs(
     return crs, extent_gdf, points_gdf, boxes_gdf
 
 
-def unsharp(img_arr, radius=1.2, amount=1.0):
+def unsharp(img_arr, amount=1.0, radius=1.2):
     """
     Apply an unsharp mask to an image array to enhance its sharpness.
 
     Parameters:
         img_arr (numpy.ndarray): The input image array. Expected to be in a format
                                  compatible with OpenCV (e.g., uint8).
+        amount (float, optional): The scaling factor for the unsharp mask.
+                                  Higher values increase the sharpness effect. Default is 1.
         radius (float, optional): The standard deviation of the Gaussian blur
                                   used to create the unsharp mask. Default is 1.2.
-        amount (float, optional): The scaling factor for the unsharp mask.
-                                  Higher values increase the sharpness effect. Default is 1.0.
 
     Returns:
         numpy.ndarray: The sharpened image array with values clipped to the range [1, 255].
@@ -333,8 +317,7 @@ def process_box_segmentations(
     tif_path: str,
     boxes_gdf: gpd.GeoDataFrame,
     points_gdf: gpd.GeoDataFrame,
-    labels: Optional[List[int]],
-    use_model: str,
+    model: Union[FastSAM, SAM],
     upscale: int,
     sharp: float,
     imgsz: int,
@@ -349,8 +332,7 @@ def process_box_segmentations(
         tif_path (str): Path to the TIFF image file.
         boxes_gdf (gpd.GeoDataFrame): GeoDataFrame containing input bounding boxes.
         points_gdf (gpd.GeoDataFrame): GeoDataFrame of labeled point features.
-        labels (Optional[List[int]]): List of binary labels associated with the points.
-        use_model (str): Name of the segmentation model to use.
+        model (Union[FastSAM, SAM]): Name of the segmentation model to use.
         imgsz (int): Image size to be passed to the model.
         conf (float): Confidence threshold for segmentation.
         iou (float): IoU threshold for segmentation.
@@ -363,10 +345,10 @@ def process_box_segmentations(
     for _, b in boxes_gdf.iterrows():
         b = gpd.GeoDataFrame([b], crs=boxes_gdf.crs)
         box_area = b.geometry.area.sum()
-        img_win, win_trans = get_window_array(tif_path, b)
-        img_win = unsharp(img_win)
+        img_win, win_trans = get_window_array(tif_path, b, upscale)
+        img_win = unsharp(img_win, sharp)
         masks = predict_extent(
-            img_win, win_trans, b, points_gdf, labels, use_model, imgsz, conf, iou
+            img_win, win_trans, b, points_gdf, model, imgsz, conf, iou
         )
         if masks is not None:
             m_gdf = masks_to_geodataframe(masks, win_trans, crs, box_area)
@@ -383,8 +365,7 @@ def process_full_extent_segmentation(
     tif_path: str,
     extent_gdf: gpd.GeoDataFrame,
     points_gdf: gpd.GeoDataFrame,
-    labels: Optional[List[int]],
-    use_model: str,
+    model: Union[FastSAM, SAM],
     upscale: int,
     sharp: float,
     imgsz: int,
@@ -399,8 +380,7 @@ def process_full_extent_segmentation(
         tif_path (str): Path to the TIFF image file.
         extent_gdf (gpd.GeoDataFrame): GeoDataFrame representing the full bounding box extent.
         points_gdf (gpd.GeoDataFrame): GeoDataFrame of labeled point features.
-        labels (Optional[List[int]]): List of binary labels associated with the points.
-        use_model (str): Name of the segmentation model to use.
+        model (Union[FastSAM, SAM]): FastSAM or SAM model instance to use.
         imgsz (int): Image size to be passed to the model.
         conf (float): Confidence threshold for segmentation.
         iou (float): IoU threshold for segmentation.
@@ -409,11 +389,18 @@ def process_full_extent_segmentation(
     Returns:
         gpd.GeoDataFrame: GeoDataFrame containing the segmented polygons within the full extent.
     """
-    img_win, win_trans = get_window_array(tif_path, extent_gdf)
-    img_win = unsharp(img_win)
+    img_win, win_trans = get_window_array(tif_path, extent_gdf, upscale)
+    img_win = unsharp(img_win, sharp)
     box_area = extent_gdf.geometry.area.sum()
     masks = predict_extent(
-        img_win, win_trans, extent_gdf, points_gdf, labels, use_model, imgsz, conf, iou
+        img_win,
+        win_trans,
+        extent_gdf,
+        points_gdf,
+        model,
+        imgsz,
+        conf,
+        iou,
     )
     return masks_to_geodataframe(masks, win_trans, crs, box_area)
 
@@ -421,8 +408,7 @@ def process_full_extent_segmentation(
 def create_segmentation_geojson(
     tif_path: str,
     features: List[Dict],
-    labels: Optional[List[int]] = None,
-    use_model: str = "FastSAM",
+    model: Union[FastSAM, SAM],
     upscale: int = 2,
     sharp: float = 1.2,
     imgsz: int = 1024,
@@ -435,8 +421,7 @@ def create_segmentation_geojson(
     Args:
         tif_path (str): Path to the TIFF image file.
         features (List[Dict]): List of GeoJSON-style features containing points and polygons.
-        labels (Optional[List[int]], optional): List of binary labels associated with point features. Defaults to None.
-        use_model (str, optional): Name of the segmentation model to use ("FastSAM", "MobileSAM", "SAM2-t"). Defaults to "FastSAM".
+        model (Union[FastSAM, SAM]): Name of the segmentation model to use ("FastSAM", "MobileSAM", "SAM2-t"). Defaults to "FastSAM".
         imgsz (int, optional): Image size to be passed to the model. Defaults to 1024.
         conf (float, optional): Confidence threshold for segmentation. Defaults to 0.2.
         iou (float, optional): IoU threshold for segmentation. Defaults to 0.5.
@@ -453,8 +438,7 @@ def create_segmentation_geojson(
                 tif_path,
                 boxes_gdf,
                 points_gdf,
-                labels,
-                use_model,
+                model,
                 upscale,
                 sharp,
                 imgsz,
@@ -469,8 +453,7 @@ def create_segmentation_geojson(
         tif_path,
         extent_gdf,
         points_gdf,
-        labels,
-        use_model,
+        model,
         upscale,
         sharp,
         imgsz,
