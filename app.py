@@ -4,6 +4,7 @@ import folium
 from folium.plugins import Draw
 from pathlib import Path
 import geopandas as gpd
+from ultralytics import FastSAM, SAM
 
 # internal import
 from src.rssam.predict import create_segmentation_geojson
@@ -62,6 +63,34 @@ if "initialized" not in st.session_state:
     st.session_state["imgsz"] = IMGSZ_DEFAULT
     st.session_state["conf"] = CONF_DEFAULT
     st.session_state["iou"] = IOU_DEFAULT
+
+
+@st.cache_resource
+def load_fastsam():
+    return FastSAM("FastSAM-x.pt")
+
+
+@st.cache_resource
+def load_mobilesam():
+    return SAM("mobile_sam.pt")
+
+
+@st.cache_resource
+def load_sam2t():
+    return SAM("sam2_s.pt")
+
+
+def load_model(use_model):
+    if use_model == "FastSAM":
+        return load_fastsam()
+    elif use_model == "MobileSAM":
+        return load_mobilesam()
+    elif use_model == "SAM2-t":
+        return load_sam2t()
+    else:
+        raise ValueError(
+            f"Invalid model name: {use_model}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
+        )
 
 
 def create_map(center, zoom_val):
@@ -246,11 +275,13 @@ if st.session_state.get("out", False):
             f"Generating {st.session_state["model_name"]} predictions...",
             show_time=True,
         ):
+            model = load_model(st.session_state["model_name"])
             gdf = create_segmentation_geojson(
                 TIF_PATH,
                 mapped_features,
-                None,
-                st.session_state["model_name"],
+                model,
+                upscale=st.session_state["upscale"],
+                sharp=st.session_state["sharp"],
                 imgsz=st.session_state["imgsz"],
                 conf=st.session_state["conf"],
                 iou=st.session_state["iou"],
