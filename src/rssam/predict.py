@@ -1,16 +1,18 @@
 import rasterio as rio
 from rasterio.windows import from_bounds, transform as window_transform
 from rasterio.features import shapes
-from shapely.geometry import shape
 from rasterio.crs import CRS
+from rasterio.enums import Resampling
+from shapely.geometry import shape
 from ultralytics import FastSAM, SAM
 import numpy as np
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import box
 from typing import List, Dict, Tuple, Union, Optional
-from affine import Affine
+from rasterio.transform import Affine
 import streamlit as st
+import cv2
 
 
 
@@ -81,31 +83,53 @@ def extent_to_gdf():
 
 
 def get_window_array(
-    tif_path: str, extent_gdf: gpd.GeoDataFrame
+    tif_path: str,
+    extent_gdf: gpd.GeoDataFrame,
+    upscale_factor: int = 4
 ) -> Tuple[np.ndarray, Affine]:
     """
-    Read a windowed array and its affine transform from a raster using a given extent.
+    Read an upscaled windowed array and its affine transform from a raster using a given extent.
 
     Args:
         tif_path (str): Path to the TIFF image file.
         extent_gdf (gpd.GeoDataFrame): GeoDataFrame representing the bounding extent.
+        upscale_factor (int, optional): Factor by which to upscale the windowed image. Defaults to 2.
+        resampling (Resampling, optional): Resampling method for upscaling. Defaults to Resampling.bilinear.
 
     Returns:
-        Tuple[np.ndarray, Affine]: Tuple containing the windowed image array (H, W, C) and its affine transform.
+        Tuple[np.ndarray, Affine]: Upscaled windowed image array (H, W, C) and its affine transform.
     """
 
     with rio.open(tif_path) as f:
-        profile = f.profile
+        prof = f.profile
+        trans = prof["transform"]
 
+        # Calculate window from bounds
         minx, miny, maxx, maxy = extent_gdf.bounds.iloc[0].to_list()
-        win = from_bounds(minx, miny, maxx, maxy, profile["transform"])
+        win = from_bounds(minx, miny, maxx, maxy, trans)
 
-        win_arr = f.read(window=win)
-        win_arr = win_arr.transpose(1, 2, 0)
+        
+        win_arr = f.read(
+            window=win,
+        )
 
-        win_trans = window_transform(win, profile["transform"])
+        win_arr = np.moveaxis(win_arr, 0, 2)
 
-    return win_arr, win_trans
+        # Read windowed data with upscaling
+        height = int(win_arr.shape[0] * upscale_factor)
+        width = int(win_arr.shape[1] * upscale_factor)
+
+        win_arr_up = cv2.resize(
+            win_arr, (width, height),
+            interpolation=cv2.INTER_LINEAR
+        )
+
+        
+        # Adjust transform for window and upscaling
+        win_trans = window_transform(win, trans)
+        upscale_transform = win_trans * Affine.scale(1 / upscale_factor, 1 / upscale_factor)
+
+    return win_arr_up, upscale_transform
 
 
 def validate_boxes(
@@ -286,6 +310,13 @@ def prepare_inputs(
     boxes_gdf = boxes_gdf.to_crs(crs)
     return crs, extent_gdf, points_gdf, boxes_gdf
 
+def unsharp(img_arr, radius=1.2, amount=1.0):
+    arr_f = img_arr.astype(np.float32)
+    blur = cv2.GaussianBlur(arr_f, (0, 0), radius)
+    sharp = arr_f + amount * (arr_f - blur)
+    sharp = np.clip(sharp, 1, 255).astype(np.uint8)
+
+    return sharp
 
 def process_box_segmentations(
     tif_path: str,
@@ -320,6 +351,7 @@ def process_box_segmentations(
         b = gpd.GeoDataFrame([b], crs=boxes_gdf.crs)
         box_area = b.geometry.area.sum()
         img_win, win_trans = get_window_array(tif_path, b)
+        img_win = unsharp(img_win)
         masks = predict_extent(
             img_win, win_trans, b, points_gdf, labels, use_model, imgsz, conf, iou
         )
@@ -363,11 +395,14 @@ def process_full_extent_segmentation(
         gpd.GeoDataFrame: GeoDataFrame containing the segmented polygons within the full extent.
     """
     img_win, win_trans = get_window_array(tif_path, extent_gdf)
+    img_win = unsharp(img_win)
     box_area = extent_gdf.geometry.area.sum()
     masks = predict_extent(
         img_win, win_trans, extent_gdf, points_gdf, labels, use_model, imgsz, conf, iou
     )
     return masks_to_geodataframe(masks, win_trans, crs, box_area)
+
+
 
 
 def create_segmentation_geojson(
