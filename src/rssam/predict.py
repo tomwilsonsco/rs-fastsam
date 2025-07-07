@@ -15,7 +15,6 @@ import streamlit as st
 import cv2
 
 
-
 def get_crs(tif_path: str) -> Union[str, CRS]:
     """
     Retrieve the coordinate reference system (CRS) from a raster TIFF file.
@@ -83,9 +82,7 @@ def extent_to_gdf():
 
 
 def get_window_array(
-    tif_path: str,
-    extent_gdf: gpd.GeoDataFrame,
-    upscale_factor: int = 4
+    tif_path: str, extent_gdf: gpd.GeoDataFrame, upscale_factor: int = 4
 ) -> Tuple[np.ndarray, Affine]:
     """
     Read an upscaled windowed array and its affine transform from a raster using a given extent.
@@ -108,7 +105,6 @@ def get_window_array(
         minx, miny, maxx, maxy = extent_gdf.bounds.iloc[0].to_list()
         win = from_bounds(minx, miny, maxx, maxy, trans)
 
-        
         win_arr = f.read(
             window=win,
         )
@@ -120,14 +116,14 @@ def get_window_array(
         width = int(win_arr.shape[1] * upscale_factor)
 
         win_arr_up = cv2.resize(
-            win_arr, (width, height),
-            interpolation=cv2.INTER_LINEAR
+            win_arr, (width, height), interpolation=cv2.INTER_LINEAR
         )
 
-        
         # Adjust transform for window and upscaling
         win_trans = window_transform(win, trans)
-        upscale_transform = win_trans * Affine.scale(1 / upscale_factor, 1 / upscale_factor)
+        upscale_transform = win_trans * Affine.scale(
+            1 / upscale_factor, 1 / upscale_factor
+        )
 
     return win_arr_up, upscale_transform
 
@@ -212,8 +208,7 @@ def predict_extent(
             imgsz=imgsz,
             conf=conf,
             iou=iou,
-            verbose=True,
-            max_det=1200,
+            verbose=False,
         )
     except Exception as e:
         st.error(f"An error occurred during segmentation: {e}")
@@ -310,7 +305,22 @@ def prepare_inputs(
     boxes_gdf = boxes_gdf.to_crs(crs)
     return crs, extent_gdf, points_gdf, boxes_gdf
 
+
 def unsharp(img_arr, radius=1.2, amount=1.0):
+    """
+    Apply an unsharp mask to an image array to enhance its sharpness.
+
+    Parameters:
+        img_arr (numpy.ndarray): The input image array. Expected to be in a format
+                                 compatible with OpenCV (e.g., uint8).
+        radius (float, optional): The standard deviation of the Gaussian blur
+                                  used to create the unsharp mask. Default is 1.2.
+        amount (float, optional): The scaling factor for the unsharp mask.
+                                  Higher values increase the sharpness effect. Default is 1.0.
+
+    Returns:
+        numpy.ndarray: The sharpened image array with values clipped to the range [1, 255].
+    """
     arr_f = img_arr.astype(np.float32)
     blur = cv2.GaussianBlur(arr_f, (0, 0), radius)
     sharp = arr_f + amount * (arr_f - blur)
@@ -318,12 +328,15 @@ def unsharp(img_arr, radius=1.2, amount=1.0):
 
     return sharp
 
+
 def process_box_segmentations(
     tif_path: str,
     boxes_gdf: gpd.GeoDataFrame,
     points_gdf: gpd.GeoDataFrame,
     labels: Optional[List[int]],
     use_model: str,
+    upscale: int,
+    sharp: float,
     imgsz: int,
     conf: float,
     iou: float,
@@ -372,6 +385,8 @@ def process_full_extent_segmentation(
     points_gdf: gpd.GeoDataFrame,
     labels: Optional[List[int]],
     use_model: str,
+    upscale: int,
+    sharp: float,
     imgsz: int,
     conf: float,
     iou: float,
@@ -403,13 +418,13 @@ def process_full_extent_segmentation(
     return masks_to_geodataframe(masks, win_trans, crs, box_area)
 
 
-
-
 def create_segmentation_geojson(
     tif_path: str,
     features: List[Dict],
     labels: Optional[List[int]] = None,
     use_model: str = "FastSAM",
+    upscale: int = 2,
+    sharp: float = 1.2,
     imgsz: int = 1024,
     conf: float = 0.2,
     iou: float = 0.5,
@@ -440,6 +455,8 @@ def create_segmentation_geojson(
                 points_gdf,
                 labels,
                 use_model,
+                upscale,
+                sharp,
                 imgsz,
                 conf,
                 iou,
@@ -449,5 +466,15 @@ def create_segmentation_geojson(
                 return gdf
 
     return process_full_extent_segmentation(
-        tif_path, extent_gdf, points_gdf, labels, use_model, imgsz, conf, iou, crs
+        tif_path,
+        extent_gdf,
+        points_gdf,
+        labels,
+        use_model,
+        upscale,
+        sharp,
+        imgsz,
+        conf,
+        iou,
+        crs,
     )

@@ -39,10 +39,12 @@ with st.expander("❓ How to use"):
 
 TIF_PATH = (
     Path("data")
-    / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped_sharp_rs.tif"  # "nir_8bit_sharpened.tif"#"S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
+    / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"  # "nir_8bit_sharpened.tif"#"S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
 )
 
-IMGSZ_DEFAULT = 512
+UPSCALE_DEFAULT = 2
+SHARP_DEFAULT = 1.2
+IMGSZ_DEFAULT = 640
 CONF_DEFAULT = 0.3
 IOU_DEFAULT = 0.5
 
@@ -55,6 +57,8 @@ if "initialized" not in st.session_state:
     st.session_state["rectangles"] = []
     st.session_state["map"] = None
     st.session_state["predict_disabled"] = False
+    st.session_state["upscale"] = UPSCALE_DEFAULT
+    st.session_state["sharp"] = SHARP_DEFAULT
     st.session_state["imgsz"] = IMGSZ_DEFAULT
     st.session_state["conf"] = CONF_DEFAULT
     st.session_state["iou"] = IOU_DEFAULT
@@ -69,7 +73,7 @@ def create_map(center, zoom_val):
 
     folium.TileLayer(
         tiles="https://tomwilsonsco.github.io/s2_tiles/tiles//{z}/{x}/{y}.png",
-        attr="Sentinel-2 10m",
+        attr="Copernicus Sentinel-2 2025",
         name="Sentinel 2 RGB 10m",
         overlay=True,
         control=True,
@@ -97,18 +101,6 @@ def trigger_segmentation():
     current_drawings = st.session_state["out"]["all_drawings"]
     if current_drawings is not None:
         st.session_state["draw_features"] = current_drawings
-    #     all_points = [
-    #         p["geometry"]["coordinates"]
-    #         for p in current_drawings
-    #         if p["geometry"]["type"] == "Point"
-    #     ]
-    #     st.session_state["points"] = all_points
-    #     all_rectangles = [
-    #         p["geometry"]["coordinates"]
-    #         for p in current_drawings
-    #         if p["geometry"]["type"] == "Polygon"
-    #     ]
-    #     st.session_state["rectangles"] = all_rectangles
 
 
 def clear_segmentation():
@@ -169,11 +161,32 @@ with st.sidebar:
             reset_params()
             st.session_state["no_masks"] = None
         st.selectbox(
+            "Image upscaling",
+            (0, 2, 4, 8),
+            index=1,
+            key="upscale",
+            help="The upscaling factor applied to the image before it is segmented. \
+            Upscaling uses bilinear rescaling. Higher values are more upscaling, but will \
+            slow down prediction time.",
+        )
+        st.slider(
+            "Sharpening amount",
+            min_value=0.1,
+            max_value=2.5,
+            value=st.session_state["sharp"],
+            step=0.1,
+            key="sharp",
+            help="The higher the amount the more the sharpening is applied to the \
+            image before it is segmented",
+        )
+        st.selectbox(
             "Input image size",
             (256, 512, 640, 768, 1024),
             index=2,
             key="imgsz",
-            help="Only applied for FastSAM. Size to resize the image for segmentation.",
+            help="The resolution to which the input image will be resized before processing.\
+            Higher values may improve segmentation accuracy by preserving finer details, \
+            however higher values will also increase processing time.",
         )
         st.slider(
             "Confidence threshold",
@@ -182,7 +195,8 @@ with st.sidebar:
             value=st.session_state["conf"],
             step=0.01,
             key="conf",
-            help="Minimum confidence for mask predictions",
+            help="Minimum confidence for mask predictions. \
+            Higher thresholds may result in fewer predictions.",
         )
         st.slider(
             "IOU threshold",
@@ -191,7 +205,8 @@ with st.sidebar:
             value=st.session_state["iou"],
             step=0.01,
             key="iou",
-            help="Non-max suppression IOU threshold",
+            help="Intersect over union non-maximum supression threshold. \
+            Higher values mean fewer overlapping predictions are removed",
         )
     st.button(
         "Create Predictions",
@@ -292,29 +307,8 @@ fg = folium.FeatureGroup(name="Drawing features", control=True)
 
 if st.session_state.get("draw_features", False):
     for feature in st.session_state["draw_features"]:
-        # Use folium.GeoJson for all types of features for simplicity and consistency.
-        # The Draw plugin will correctly interpret these GeoJSON features.
         folium.GeoJson(feature).add_to(fg)
 
-
-# for point in st.session_state.get("points", None):
-#     fg.add_child(
-#         folium.Marker(location=[point[1], point[0]], name="point markers", control=True)
-#     )
-
-# # RECTANGLES LAYER
-# for rect in st.session_state.get("rectangles", None):
-#     rect = rect[0]
-#     rect = [[lat, lon] for lon, lat in rect]
-#     fg.add_child(
-#         folium.Polygon(
-#             locations=rect,
-#             name="rectangle markers",
-#             fill=True,
-#             fill_opacity=0.2,
-#             control=True,
-#         )
-#     )
 
 m = create_map(st.session_state["center"], st.session_state["zoom"])
 
@@ -338,9 +332,6 @@ draw = Draw(
 draw.add_to(m)
 
 folium.LayerControl().add_to(m)
-
-if st.session_state.get("out", False):
-    print(st.session_state["out"]["all_drawings"])
 
 out = st_folium(
     m,
