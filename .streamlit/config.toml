@@ -4,13 +4,13 @@ enableStaticServing = true
 
 [[theme.fontFaces]]
 family = "Roboto"
-url = "app/static/Roboto-Regular.ttf"
+url = "app/static/Roboto-Regular.woff2"
 weight = 400
 style = "normal"
 
 [[theme.fontFaces]]
 family = "Roboto"
-url = "app/static/Roboto-Bold.ttf"
+url = "app/static/Roboto-Bold.woff2"
 weight = 700
 style = "normal"
 
