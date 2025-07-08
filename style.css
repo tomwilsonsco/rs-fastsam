@@ -18,3 +18,7 @@ footer {
         width: 250px !important;
     }
 
+iframe {
+  min-height: 300px !important;
+  max-height: 90vh !important;
+}
