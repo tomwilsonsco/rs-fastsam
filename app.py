@@ -15,8 +15,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-with open("style.css") as f:
-    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+st.html("style.css")
 
 st.title(" 🛰️Segment Sentinel-2 Imagery")
 
@@ -26,14 +26,15 @@ with st.expander("❓ How to use"):
     1. Zoom in on the area you wish to segment. You need to zoom to level 14 or 15 to generate predictions.
     2. (Optional) Use the draw marker / rectangle tools on the top left to place features on the map to target specific areas.
     3. Choose **FastSAM**, **MobileSAM**, **SAM2-t** from the sidebar.  
-    4. Click Create Predictions and wait for the segmentation predictions to draw.  
+    4. Click Run Segmentation and wait for the segmentation predictions to draw.  
     5. (Optional) Download the predictions as a GeoJSON file.  
     6. Delete drawings or predictions and run again as needed.
 
     ##### Tips:
-    1. FastSAM is quicker, but MobileSAM can produce better quality segmentations for full extent.
-    2. Rectangle drawings are for targetting specific features like a field or lake, not for segmenting all features in a smaller extent.
-    2. When drawing features, only features in the current display extent are used for the segmentations.
+    1. For extent predictions FastSAM is quicker, but MobileSAM can produce better quality segmentations.
+    2. For individual feature predictions using markers, all models are typically fast.
+    2. Rectangle drawings are for segmenting all features in a smaller extent.
+    3. When drawing features, only features in the current display extent are used for the segmentations.
     """
     )
 
@@ -53,7 +54,6 @@ if "initialized" not in st.session_state:
     st.session_state["gdf"] = gpd.GeoDataFrame([])
     st.session_state["segmentation_run"] = False
     st.session_state["initialized"] = True
-    st.session_state["map"] = None
     st.session_state["predict_disabled"] = False
     st.session_state["upscale"] = UPSCALE_DEFAULT
     st.session_state["sharp"] = SHARP_DEFAULT
@@ -63,30 +63,17 @@ if "initialized" not in st.session_state:
 
 
 @st.cache_resource
-def load_fastsam():
-    return FastSAM("FastSAM-x.pt")
-
-
-@st.cache_resource
-def load_mobilesam():
-    return SAM("mobile_sam.pt")
-
-
-@st.cache_resource
-def load_sam2t():
-    return SAM("sam2_s.pt")
-
-
-def load_model(use_model):
-    if use_model == "FastSAM":
-        return load_fastsam()
-    elif use_model == "MobileSAM":
-        return load_mobilesam()
-    elif use_model == "SAM2-t":
-        return load_sam2t()
+def load_model(model_name: str):
+    """Load the specified model (cached)."""
+    if model_name == "FastSAM":
+        return FastSAM("FastSAM-x.pt")
+    elif model_name == "MobileSAM":
+        return SAM("mobile_sam.pt")
+    elif model_name == "SAM2-t":
+        return SAM("sam2_s.pt")
     else:
         raise ValueError(
-            f"Invalid model name: {use_model}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
+            f"Invalid model name: {model_name}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
         )
 
 
@@ -122,46 +109,19 @@ def trigger_segmentation():
     old_zoom = st.session_state["out"]["zoom"]
     st.session_state["center"] = old_center
     st.session_state["zoom"] = old_zoom
-    ## After running this once st.session_state["out"]["all_drawings"]
+    ## After running predictions once st.session_state["out"]["all_drawings"]
     ## becomes None. If delete all features with draw edit tools becomes []
     # Therefore current_drawings is Not None current works to achieve this
-    current_drawings = st.session_state["out"]["all_drawings"]
+    # `if current_drawings` would not suffice so do not fix
+    current_drawings = st.session_state.get("out", {}).get("all_drawings")
     if current_drawings is not None:
         st.session_state["draw_features"] = current_drawings
-
-
-def clear_segmentation():
-    if "center" in st.session_state["out"]:
-        old_center = [
-            st.session_state["out"]["center"]["lat"],
-            st.session_state["out"]["center"]["lng"],
-        ]
-        old_zoom = st.session_state["out"]["zoom"]
-        st.session_state["center"] = old_center
-        st.session_state["zoom"] = old_zoom
-    st.session_state["segmentation_done"] = False
-    st.session_state["gdf"] = gpd.GeoDataFrame([])
 
 
 def reset_params():
     st.session_state["imgsz"] = IMGSZ_DEFAULT
     st.session_state["conf"] = CONF_DEFAULT
     st.session_state["iou"] = IOU_DEFAULT
-
-
-def delete_features():
-    if st.session_state["out"].get("center", False):
-        clean_center = [
-            st.session_state["out"]["center"]["lat"] + 0.0001,
-            st.session_state["out"]["center"]["lng"],
-        ]
-        clean_zoom = st.session_state["out"]["zoom"]
-        st.session_state["center"] = clean_center
-        st.session_state["zoom"] = clean_zoom
-    st.session_state["no_masks"] = False
-    st.session_state["points"] = []
-    st.session_state["rectangles"] = []
-    st.session_state["labels"] = []
 
 
 def download_polys(gdf):
@@ -272,29 +232,35 @@ if st.session_state.get("out", False):
         else:
             mapped_features = []
         with st.spinner(
-            f"Generating {st.session_state["model_name"]} predictions...",
+            f"Generating {st.session_state['model_name']} predictions...",
             show_time=True,
         ):
-            model = load_model(st.session_state["model_name"])
-            gdf = create_segmentation_geojson(
-                TIF_PATH,
-                mapped_features,
-                model,
-                upscale=st.session_state["upscale"],
-                sharp=st.session_state["sharp"],
-                imgsz=st.session_state["imgsz"],
-                conf=st.session_state["conf"],
-                iou=st.session_state["iou"],
-            )
+            try:
+                model = load_model(st.session_state["model_name"])
+                gdf = create_segmentation_geojson(
+                    TIF_PATH,
+                    mapped_features,
+                    model,
+                    upscale=st.session_state["upscale"],
+                    sharp=st.session_state["sharp"],
+                    imgsz=st.session_state["imgsz"],
+                    conf=st.session_state["conf"],
+                    iou=st.session_state["iou"],
+                )
+            except Exception as e:
+                st.session_state["no_masks"] = True
+                st.session_state["segmentation_run"] = False
+                st.session_state["gdf"] = gpd.GeoDataFrame([])
+                st.error(f"Segmentation failed: {e}")
+
         if gdf is None:
             st.session_state["no_masks"] = True
             st.session_state["segmentation_run"] = False
             st.session_state["gdf"] = gpd.GeoDataFrame([])
         else:
             st.session_state["no_masks"] = False
-            geosjon_file = download_polys(gdf)
-            st.session_state["gdf"] = gdf
             st.session_state["segmentation_run"] = False
+            st.session_state["gdf"] = gdf
 
 
 if st.session_state.get("no_masks"):
@@ -370,7 +336,7 @@ out = st_folium(
     zoom=st.session_state["zoom"],
     feature_group_to_add=[fg, pred_fg],
     key="out",
-    height=700,
+    height=650,
     use_container_width=True,
     pixelated=False,
 )
