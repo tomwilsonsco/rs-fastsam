@@ -183,7 +183,7 @@ with st.sidebar:
         placeholder="FastSAM",
         key="model_name",
     )
-    with st.expander("⚙️ Prediction Parameters", expanded=False):
+    with st.expander("⚙️ Settings", expanded=False):
         if st.button("Reset parameters"):
             reset_params()
             st.session_state["no_masks"] = None
@@ -300,7 +300,7 @@ if st.session_state.get("out", False):
 if st.session_state.get("no_masks"):
     st.error(
         "No segmentation masks were generated with those parameters.  \n"
-        "Try lowering the confidence or IOU thresholds, or increasing image size."
+        "Try lowering the confidence, or increasing IoU, or image size."
     )
 
 if "zoom" not in st.session_state:
@@ -332,7 +332,7 @@ if not st.session_state["gdf"].empty:
     )
 
 
-# POINTS LAYER
+# DRAWING LAYERS
 
 fg = folium.FeatureGroup(name="Drawing features", control=True)
 
@@ -370,7 +370,7 @@ out = st_folium(
     zoom=st.session_state["zoom"],
     feature_group_to_add=[fg, pred_fg],
     key="out",
-    height=600,
-    width=900,
+    height=550,
+    width=950,
     pixelated=False,
 )
