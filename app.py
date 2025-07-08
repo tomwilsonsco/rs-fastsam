@@ -9,7 +9,7 @@ from ultralytics import FastSAM, SAM
 # internal import
 from src.rssam.predict import create_segmentation_geojson
 
-# → Page config
+# Page config
 st.set_page_config(
     page_title="🛰️ Sentinel-2 Image Segmentation",
     layout="wide",
@@ -20,6 +20,7 @@ st.html("style.css")
 
 st.title(" 🛰️Segment Sentinel-2 Imagery")
 
+# Help guide
 with st.expander("❓ How to use"):
     st.markdown(
         """
@@ -38,18 +39,20 @@ with st.expander("❓ How to use"):
     """
     )
 
-
+# Source image
 TIF_PATH = (
     Path("data")
-    / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"  # "nir_8bit_sharpened.tif"#"S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
+    / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
 )
 
+# Prediction parameter initial values
 UPSCALE_DEFAULT = 2
 SHARP_DEFAULT = 1.2
 IMGSZ_DEFAULT = 640
 CONF_DEFAULT = 0.3
 IOU_DEFAULT = 0.5
 
+# Initial session states
 if "initialized" not in st.session_state:
     st.session_state["gdf"] = gpd.GeoDataFrame([])
     st.session_state["segmentation_run"] = False
@@ -62,6 +65,7 @@ if "initialized" not in st.session_state:
     st.session_state["iou"] = IOU_DEFAULT
 
 
+# Cached model loading function
 @st.cache_resource
 def load_model(model_name: str):
     """Load the specified model (cached)."""
@@ -99,6 +103,7 @@ def create_map(center, zoom_val):
 
 
 def trigger_segmentation():
+    """When click run segmentation"""
     st.session_state["gdf"] = gpd.GeoDataFrame([])
     st.session_state["segmentation_run"] = True
     st.session_state["no_masks"] = None
@@ -119,15 +124,20 @@ def trigger_segmentation():
 
 
 def reset_params():
+    """When click reset parameters"""
     st.session_state["imgsz"] = IMGSZ_DEFAULT
     st.session_state["conf"] = CONF_DEFAULT
     st.session_state["iou"] = IOU_DEFAULT
+    st.session_state["upscale"] = UPSCALE_DEFAULT
+    st.session_state["sharp"] = SHARP_DEFAULT
 
 
 def download_polys(gdf):
+    """Download predictions as geojson"""
     return gdf.to_file("data/preds.geojson", driver="GeoJSON")
 
 
+# Disable predictions when zoomed out
 if st.session_state.get("out", False):
     current_zoom = st.session_state["out"]["zoom"]
     if current_zoom < 14:
@@ -135,7 +145,7 @@ if st.session_state.get("out", False):
     else:
         st.session_state["predict_disabled"] = False
 
-
+# SIDEBAR WIDGETS
 with st.sidebar:
     st.selectbox(
         label="📊 Model to use",
@@ -220,7 +230,7 @@ with st.sidebar:
         st.caption(f"Zoom Level: {zoom}")
         st.caption(f"Centre: {lat:.3f}, {lng:.3f}")
 
-
+# Run segmentations but check clean slate and zoomed in
 if st.session_state.get("out", False):
     if (
         st.session_state["gdf"].empty
@@ -247,28 +257,31 @@ if st.session_state.get("out", False):
                     conf=st.session_state["conf"],
                     iou=st.session_state["iou"],
                 )
+            # Failed to run
             except Exception as e:
                 st.session_state["no_masks"] = True
                 st.session_state["segmentation_run"] = False
                 st.session_state["gdf"] = gpd.GeoDataFrame([])
                 st.error(f"Segmentation failed: {e}")
-
-        if gdf is None:
+        # Created no results
+        if gdf.empty:
             st.session_state["no_masks"] = True
             st.session_state["segmentation_run"] = False
             st.session_state["gdf"] = gpd.GeoDataFrame([])
+        # Success
         else:
             st.session_state["no_masks"] = False
             st.session_state["segmentation_run"] = False
             st.session_state["gdf"] = gdf
 
-
+# Warning when no results / segmentation failed
 if st.session_state.get("no_masks"):
     st.error(
         "No segmentation masks were generated with those parameters.  \n"
         "Try lowering the confidence, or increasing IoU, or image size."
     )
 
+# Initial map positions
 if "zoom" not in st.session_state:
     st.session_state["zoom"] = 14
 
@@ -278,7 +291,7 @@ if "center" not in st.session_state:
 
 # PREDICTIONS LAYER
 pred_fg = folium.FeatureGroup(name="Prediction Polygons", control=True)
-
+# Predictions to feature group
 if not st.session_state["gdf"].empty:
     pred_fg.add_child(
         folium.GeoJson(
@@ -299,21 +312,21 @@ if not st.session_state["gdf"].empty:
 
 
 # DRAWING LAYERS
-
+# Drawing feature group
 fg = folium.FeatureGroup(name="Drawing features", control=True)
 
 if st.session_state.get("draw_features", False):
     for feature in st.session_state["draw_features"]:
         folium.GeoJson(feature).add_to(fg)
 
-
+# Create folium map
 m = create_map(st.session_state["center"], st.session_state["zoom"])
 
 # Add layers to map
 m.add_child(fg)
 m.add_child(pred_fg)
 
-
+# Drawing tools
 draw = Draw(
     feature_group=fg,
     draw_options={
@@ -328,8 +341,10 @@ draw = Draw(
 )
 draw.add_to(m)
 
+# Can switch layers on and off in top right of map
 folium.LayerControl().add_to(m)
 
+# Create the streamlit folium st_folium object
 out = st_folium(
     m,
     center=st.session_state["center"],
