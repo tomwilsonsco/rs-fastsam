@@ -1,5 +1,5 @@
 .block-container {
-                    padding-top: 0 !important;
+                    padding-top: 5px !important;
                     padding-bottom: 0 !important;
                     margin-bottom: 0 !important;
                     padding-left: 5rem;
@@ -13,3 +13,8 @@ h1 {
 footer {
         visibility: hidden !important;
 }
+
+[data-testid="stSidebar"] {
+        width: 250px !important;
+    }
+
