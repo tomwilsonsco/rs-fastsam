@@ -153,7 +153,7 @@ with st.sidebar:
         placeholder="FastSAM",
         key="model_name",
     )
-    with st.expander("⚙️ Settings", expanded=False):
+    with st.expander("⚙️ Segment Settings", expanded=False):
         if st.button("Reset parameters"):
             reset_params()
             st.session_state["no_masks"] = None
@@ -210,6 +210,7 @@ with st.sidebar:
         on_click=trigger_segmentation,
         disabled=st.session_state["predict_disabled"],
         help="Run the specified segmentation model. Must be zoomed in to 14 or 15",
+        use_container_width=True,
     )
     if not st.session_state.get("gdf").empty:
         geojson_str = st.session_state["gdf"].to_json()
@@ -218,6 +219,7 @@ with st.sidebar:
             data=geojson_str,
             file_name="seg_preds.geojson",
             mime="application/geo+json",
+            use_container_width=True,
         )
         total_area = float(st.session_state["gdf"]["geometry"].area.sum()) / 10000
         st.caption(f"Prediction area total: {total_area:.2f} ha")
@@ -345,6 +347,7 @@ draw.add_to(m)
 folium.LayerControl().add_to(m)
 
 # Create the streamlit folium st_folium object
+
 out = st_folium(
     m,
     center=st.session_state["center"],
@@ -353,4 +356,5 @@ out = st_folium(
     key="out",
     use_container_width=True,
     pixelated=False,
+    height=650,
 )
