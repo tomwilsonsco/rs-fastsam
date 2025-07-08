@@ -15,7 +15,7 @@ weight = 700
 style = "normal"
 
 [theme]
-font="Roboto"
+font="Roboto, sans-serif"
 base="dark"
 primaryColor="#1E88E5" 
 backgroundColor="#0E1117"          
