@@ -370,7 +370,7 @@ out = st_folium(
     zoom=st.session_state["zoom"],
     feature_group_to_add=[fg, pred_fg],
     key="out",
-    height=550,
+    height=700,
     use_container_width=True,
     pixelated=False,
 )
