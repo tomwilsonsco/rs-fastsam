@@ -371,6 +371,6 @@ out = st_folium(
     feature_group_to_add=[fg, pred_fg],
     key="out",
     height=550,
-    width=950,
+    use_container_width=True,
     pixelated=False,
 )
