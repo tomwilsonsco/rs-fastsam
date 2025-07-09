@@ -4,6 +4,7 @@ from typing import Tuple
 from shapely.geometry import shape
 import streamlit as st
 
+
 def get_current_extent() -> Tuple[float, float, float, float]:
     """
     Retrieve the current map view bounds from the Streamlit session state.
@@ -28,6 +29,7 @@ def extent_to_gdf():
     minx, miny, maxx, maxy = get_current_extent()
     bbox = box(minx, miny, maxx, maxy)
     return gpd.GeoDataFrame(geometry=[bbox], crs="epsg:4326")
+
 
 def extract_features(features):
     """
