@@ -215,7 +215,7 @@ with st.sidebar:
     if not st.session_state.get("gdf").empty:
         geojson_str = st.session_state["gdf"].to_json()
         st.sidebar.download_button(
-            "🗺️ Download prediction",
+            "🗺️ Download Result",
             data=geojson_str,
             file_name="seg_preds.geojson",
             mime="application/geo+json",
