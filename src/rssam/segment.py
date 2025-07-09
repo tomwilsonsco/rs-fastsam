@@ -9,16 +9,10 @@ import pandas as pd
 from typing import List, Dict, Tuple, Union, Optional
 from rasterio.transform import Affine
 import streamlit as st
-import cv2
 
 from src.rssam.stfolium_utils import extract_features, extent_to_gdf
-from src.rssam.raster_utils import (
-    get_crs,
-    get_window_array,
-    to_pixel_coordinates,
-    validate_boxes,
-    unsharp,
-)
+from src.rssam.raster_utils import get_window_array, to_pixel_coordinates, unsharp
+from src.rssam.feature_utils import planar_union, merge_small_polygons, validate_boxes
 
 
 class RasterSegmentor:
@@ -36,7 +30,7 @@ class RasterSegmentor:
         imgsz: int = 1024,
         conf: float = 0.2,
         iou: float = 0.5,
-        min_area: float = 1000.0,
+        min_area: float = 2000.0,
     ):
         self.tif_path = tif_path
         self.features = features
@@ -147,11 +141,20 @@ class RasterSegmentor:
                     polygons.append(shape(geom_dict))
 
         gdf = gpd.GeoDataFrame(geometry=polygons, crs=self.crs)
-        #gdf = gpd.overlay(gdf, gdf, how="union")
         gdf = gdf.explode(index_parts=False)
         gdf = gdf[gdf.is_valid]
         gdf["area"] = gdf.area
-        gdf = gdf[(gdf.area >= self.min_area) & (gdf.area / box_area < 0.9)]
+        # Remove frame type features
+        gdf = gdf[(gdf.area / box_area < 0.9)]
+
+        # Removes overlapping polygons while preserving internal boundaries
+        gdf = planar_union(gdf)
+
+        # Merges small polygons with their longest shared boundary
+        gdf = merge_small_polygons(gdf, area_threshold=self.min_area)
+
+        # Final area threshold and add ha display areas
+        gdf = gdf[(gdf.area >= self.min_area)]
         gdf["area_disp"] = (gdf.area / 10000).round(2).astype(str) + " ha"
 
         return gdf

@@ -3,7 +3,7 @@ from rasterio.windows import from_bounds, transform as window_transform
 from rasterio.crs import CRS
 import numpy as np
 import geopandas as gpd
-from typing import List,Tuple, Union
+from typing import List, Tuple, Union
 from rasterio.transform import Affine
 import cv2
 
@@ -93,30 +93,6 @@ def get_window_array(
         )
 
     return win_arr_up, upscale_transform
-
-
-def validate_boxes(
-    boxes_gdf: gpd.GeoDataFrame, extent_gdf: gpd.GeoDataFrame, edge_removal: float = -15
-) -> gpd.GeoDataFrame:
-    """
-    Clip bounding boxes to a buffered extent and return only valid, non-empty geometries.
-
-    Args:
-        boxes_gdf (gpd.GeoDataFrame): GeoDataFrame of input bounding box geometries.
-        extent_gdf (gpd.GeoDataFrame): GeoDataFrame representing the extent to buffer and clip to.
-        edge_removal (float, optional): Distance (in CRS units) to buffer inward from extent. Defaults to -15.
-
-    Returns:
-        gpd.GeoDataFrame: Filtered GeoDataFrame containing only valid, non-empty geometries.
-    """
-    extent_selection = extent_gdf.buffer(edge_removal)
-    boxes_gdf["geometry"] = boxes_gdf["geometry"].intersection(extent_selection)
-
-    boxes_gdf = boxes_gdf[
-        boxes_gdf["geometry"].is_valid & ~boxes_gdf["geometry"].is_empty
-    ]
-
-    return boxes_gdf
 
 
 def unsharp(img_arr, amount=1.0, radius=1.2):
