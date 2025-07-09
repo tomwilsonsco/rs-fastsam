@@ -70,11 +70,11 @@ if "initialized" not in st.session_state:
 def load_model(model_name: str):
     """Load the specified model (cached)."""
     if model_name == "FastSAM":
-        return FastSAM("FastSAM-x.pt")
+        return FastSAM("models/FastSAM-x.pt")
     elif model_name == "MobileSAM":
-        return SAM("mobile_sam.pt")
+        return SAM("models/mobile_sam.pt")
     elif model_name == "SAM2-t":
-        return SAM("sam2_s.pt")
+        return SAM("models/sam2_s.pt")
     else:
         raise ValueError(
             f"Invalid model name: {model_name}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
