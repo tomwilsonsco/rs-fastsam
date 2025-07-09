@@ -1,10 +1,8 @@
 import rasterio as rio
 from rasterio.windows import from_bounds, transform as window_transform
-from rasterio.features import shapes
 from rasterio.crs import CRS
 import numpy as np
 import geopandas as gpd
-from shapely.geometry import box
 from typing import List,Tuple, Union
 from rasterio.transform import Affine
 import cv2
