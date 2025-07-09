@@ -6,8 +6,8 @@ from pathlib import Path
 import geopandas as gpd
 from ultralytics import FastSAM, SAM
 
-# internal import
-from src.rssam.predict import create_segmentation_geojson
+# internal class import
+from src.rssam import RasterSegmentor
 
 # Page config
 st.set_page_config(
@@ -249,7 +249,7 @@ if st.session_state.get("out", False):
         ):
             try:
                 model = load_model(st.session_state["model_name"])
-                gdf = create_segmentation_geojson(
+                gdf = RasterSegmentor(
                     TIF_PATH,
                     mapped_features,
                     model,
@@ -258,7 +258,7 @@ if st.session_state.get("out", False):
                     imgsz=st.session_state["imgsz"],
                     conf=st.session_state["conf"],
                     iou=st.session_state["iou"],
-                )
+                ).process_window()
             # Failed to run
             except Exception as e:
                 st.session_state["no_masks"] = True
@@ -356,5 +356,5 @@ out = st_folium(
     key="out",
     use_container_width=True,
     pixelated=False,
-    height=650,
+    height=600,
 )
