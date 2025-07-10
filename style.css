@@ -15,10 +15,10 @@ footer {
 }
 
 [data-testid="stSidebar"] {
-        width: 250px !important;
+        width: 300px !important;
     }
 
 iframe {
-  min-height: 300px !important;
+  min-height: 350px !important;
   max-height: 90vh !important;
 }
