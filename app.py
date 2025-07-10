@@ -5,9 +5,10 @@ from folium.plugins import Draw
 from pathlib import Path
 import geopandas as gpd
 from ultralytics import FastSAM, SAM
+import pickle
 
 # internal class import
-from src.rssam import RasterSegmentor
+from src.rssam import RasterSegmentor, classify_polygons
 
 # Page config
 st.set_page_config(
@@ -39,11 +40,17 @@ with st.expander("❓ How to use"):
     """
     )
 
-# Source image
-TIF_PATH = (
+# Source images
+SEGMENT_TIF_PATH = (
     Path("data")
     / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
 )
+
+CLASSIFY_TIF_PATH = (
+    Path("data")
+    / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_compressed_downscaled.tif"
+)
+
 
 # Prediction parameter initial values
 UPSCALE_DEFAULT = 2
@@ -79,6 +86,13 @@ def load_model(model_name: str):
         raise ValueError(
             f"Invalid model name: {model_name}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
         )
+
+
+# Load rf classifier for segment landuse classification
+@st.cache_resource
+def load_classifier():
+    with open(Path("models") / "random_forest_classifer_20250710.pkl", "rb") as f:
+        return pickle.load(f)
 
 
 def create_map(center, zoom_val):
@@ -121,6 +135,13 @@ def trigger_segmentation():
     current_drawings = st.session_state.get("out", {}).get("all_drawings")
     if current_drawings is not None:
         st.session_state["draw_features"] = current_drawings
+
+
+def trigger_classification():
+    """When click classify segments"""
+    current_gdf = st.session_state["gdf"]
+    if not current_gdf.empty:
+        st.session_state["classify"] = True
 
 
 def reset_params():
@@ -213,6 +234,13 @@ with st.sidebar:
         use_container_width=True,
     )
     if not st.session_state.get("gdf").empty:
+        st.button(
+            "🏷️ Classify Segments",
+            on_click=trigger_classification,
+            disabled=st.session_state["classify_disabled"],
+            help="Add land use type classifications to segment polygons",
+            use_container_width=True,
+        )
         geojson_str = st.session_state["gdf"].to_json()
         st.sidebar.download_button(
             "🗺️ Download Result",
@@ -221,16 +249,29 @@ with st.sidebar:
             mime="application/geo+json",
             use_container_width=True,
         )
-        total_area = float(st.session_state["gdf"]["geometry"].area.sum()) / 10000
-        st.caption(f"Prediction area total: {total_area:.2f} ha")
+        if st.session_state.get("out", False):
+            props = st.session_state["out"]
+            zoom = props["zoom"]
+            lat = props["center"]["lat"]
+            lng = props["center"]["lng"]
+            st.caption(f"Zoom Level: {zoom}")
+            st.caption(f"Centre: {lat:.3f}, {lng:.3f}")
+        
+        if not st.session_state["gdf"].empty:
+            gdf = st.session_state["gdf"]
+            total_area = float(gdf["geometry"].area.sum()) / 10000
+            st.caption(f"Prediction area total: {total_area:.2f} ha")
+            # Group and display areas by predicted class
+            filtered_gdf = gdf[gdf["predicted_class_desc"] != "N/A"]
+            if not filtered_gdf.empty:
+                grouped_areas = (
+                    filtered_gdf.groupby("predicted_class_desc")["geometry"]
+                    .apply(lambda geom: geom.area.sum() / 10000)
+                    .reset_index()
+                )
+                for _, row in grouped_areas.iterrows():
+                    st.caption(f"{row['predicted_class_desc']}: {row['geometry']:.2f} ha")
 
-    if st.session_state.get("out", False):
-        props = st.session_state["out"]
-        zoom = props["zoom"]
-        lat = props["center"]["lat"]
-        lng = props["center"]["lng"]
-        st.caption(f"Zoom Level: {zoom}")
-        st.caption(f"Centre: {lat:.3f}, {lng:.3f}")
 
 # Run segmentations but check clean slate and zoomed in
 if st.session_state.get("out", False):
@@ -250,7 +291,7 @@ if st.session_state.get("out", False):
             try:
                 model = load_model(st.session_state["model_name"])
                 gdf = RasterSegmentor(
-                    TIF_PATH,
+                    SEGMENT_TIF_PATH,
                     mapped_features,
                     model,
                     upscale=st.session_state["upscale"],
@@ -272,9 +313,21 @@ if st.session_state.get("out", False):
             st.session_state["gdf"] = gpd.GeoDataFrame([])
         # Success
         else:
+            gdf["predicted_class_desc"] = "N/A"
             st.session_state["no_masks"] = False
             st.session_state["segmentation_run"] = False
             st.session_state["gdf"] = gdf
+            st.session_state["classify_disabled"] = False
+
+# Classify segments using rf if triggered
+if st.session_state.get("classify", False):
+    current_gdf = st.session_state["gdf"]
+    with st.spinner(f"Classifying land use of {len(current_gdf)} segments..."):
+        classifier = load_classifier()
+        classified_gdf = classify_polygons(current_gdf, CLASSIFY_TIF_PATH, classifier)
+        st.session_state["gdf"] = classified_gdf
+        st.session_state["classify"] = False
+        st.session_state["classify_disabled"] = True
 
 # Warning when no results / segmentation failed
 if st.session_state.get("no_masks"):
@@ -305,7 +358,11 @@ if not st.session_state["gdf"].empty:
                 "fillOpacity": 0,
             },
             tooltip=folium.GeoJsonTooltip(
-                fields=["area_disp"], labels=True, aliases=[""], localize=True
+                fields=["predicted_class_desc", "area_disp"],
+                labels=True,
+                aliases=["Predicted Use", "Area"],
+                localize=True,
+                sticky=False,
             ),
             overlay=True,
             control=True,
