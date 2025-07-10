@@ -14,3 +14,4 @@ matplotlib
 opencv-python-headless
 ultralytics
 notebook
+scikit-learn
