@@ -1,3 +1,2 @@
 from .segment import RasterSegmentor
-
-__all__ = ["RasterSegmentor"]
+from .classify import classify_polygons
