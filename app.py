@@ -24,19 +24,21 @@ st.title(" 🛰️Segment Sentinel-2 Imagery")
 # Help guide
 with st.expander("❓ How to use"):
     st.markdown(
-        """
-    1. Zoom in on the area you wish to segment. You need to zoom to level 14 or 15 to generate predictions.
+    """
+    1. Zoom in on the area you wish to segment. You need to zoom to level 14 or 15 to generate segment predictions.
     2. (Optional) Use the draw marker / rectangle tools on the top left to place features on the map to target specific areas.
     3. Choose **FastSAM**, **MobileSAM**, **SAM2-t** from the sidebar.  
-    4. Click Run Segmentation and wait for the segmentation predictions to draw.  
-    5. (Optional) Download the predictions as a GeoJSON file.  
-    6. Delete drawings or predictions and run again as needed.
+    4. Click Run Segmentation and wait for the segmentation predictions to draw. 
+    5. Click Classify Segments to predict segment land use. 
+    6. (Optional) Download the predictions as a GeoJSON file.  
+    7. Delete or adjust drawings and pan to a new extent and create more segmentations as needed.
 
     ##### Tips:
     1. For extent predictions FastSAM is quicker, but MobileSAM can produce better quality segmentations.
     2. For individual feature predictions using markers, all models are typically fast.
-    2. Rectangle drawings are for segmenting all features in a smaller extent.
-    3. When drawing features, only features in the current display extent are used for the segmentations.
+    3. Rectangle drawings are for segmenting all features in a smaller extent.
+    4. When drawing features, only features in the current display extent are used for the segmentations.
+    5. The classification of segment land use is a work in progress and no ground truth data has been used.
     """
     )
 
