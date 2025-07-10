@@ -91,7 +91,7 @@ def load_model(model_name: str):
 # Load rf classifier for segment landuse classification
 @st.cache_resource
 def load_classifier():
-    with open(Path("models") / "random_forest_classifer_20250710.pkl", "rb") as f:
+    with open(Path("clf_models") / "random_forest_classifer_20250710.pkl", "rb") as f:
         return pickle.load(f)
 
 
