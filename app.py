@@ -16,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.html("style.css")
+st.html("static/style.css")
 
 st.title(" 🛰️Segment Sentinel-2 Imagery")
 
