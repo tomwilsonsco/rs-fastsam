@@ -15,7 +15,7 @@ footer {
 }
 
 [data-testid="stSidebar"] {
-        width: 300px !important;
+        width: 250px !important;
     }
 
 iframe {
