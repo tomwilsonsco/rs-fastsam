@@ -272,7 +272,7 @@ with st.sidebar:
                     .reset_index()
                 )
                 for _, row in grouped_areas.iterrows():
-                    st.caption(f"{row['predicted_class_desc']}: {row['geometry']:.2f} ha")
+                    st.caption(f"- {row['predicted_class_desc']}: {row['geometry']:.2f} ha")
 
 
 # Run segmentations but check clean slate and zoomed in
