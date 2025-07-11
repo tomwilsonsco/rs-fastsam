@@ -105,7 +105,7 @@ def create_map(center, zoom_val):
     m = folium.Map(location=center, zoom_start=zoom_val, max_zoom=15)
 
     folium.TileLayer(
-        tiles="https://s2-tiles.onrender.com/tiles//{z}/{x}/{y}.png",
+        tiles="https://tomwilsonsco.github.io/s2_tiles/tiles//{z}/{x}/{y}.png",
         attr="Copernicus Sentinel-2 2025",
         name="Sentinel 2 RGB 10m",
         overlay=True,
