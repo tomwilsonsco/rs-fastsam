@@ -1,21 +1,24 @@
 # Base Image
-FROM python:3.12.4-bookworm
+FROM python:3.12.4-slim
 
-RUN apt-get update
-RUN apt install -y libgl1-mesa-glx
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libgomp1 \
+    libgdal-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# pip
 RUN pip install --upgrade pip
 
-# If the steps of a `Dockerfile` use files that are different from the `context` file, COPY the
-# file of each step separately; and RUN the file immediately after COPY
 WORKDIR /app
 
-COPY /.devcontainer/requirements.txt /app
-RUN pip install --requirement /app/requirements.txt --no-cache-dir
+COPY requirements.txt .
+RUN pip install --requirement requirements.txt --no-cache-dir
+
+COPY . .
 
 # Port
-EXPOSE 8050
+EXPOSE 8080
 
 # ENTRYPOINT
 ENTRYPOINT ["bash"]
