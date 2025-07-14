@@ -1,0 +1,38 @@
+# config.yaml
+app:
+  title: "🛰️ Sentinel-2 Image Segmentation"
+  page_config:
+    layout: "wide"
+    initial_sidebar_state: "expanded"
+
+data:
+  segment_tif_path: "data/S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
+  classify_tif_path: "data/S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_compressed_downscaled.tif"
+
+models:
+  fastsam_path: "models/FastSAM-x.pt"
+  mobilesam_path: "models/mobile_sam.pt"
+  sam2_path: "models/sam2_s.pt"
+  classifier_path: "clf_models/random_forest_classifer_20250710.pkl"
+
+map:
+  max_zoom: 15
+  default_center: [56.020, -2.754]
+  default_zoom: 14
+  min_zoom_for_segmentation: 14
+  tiles:
+    url: "https://tomwilsonsco.github.io/s2_tiles/tiles//{z}/{x}/{y}.png"
+    attribution: "Copernicus Sentinel-2 2025"
+    name: "Sentinel 2 RGB 10m"
+
+defaults:
+  upscale: 2
+  sharp: 1.2
+  imgsz: 640
+  conf: 0.3
+  iou: 0.5
+
+ui:
+  model_options: ["FastSAM", "MobileSAM", "SAM2-t"]
+  upscale_options: [0, 2, 4, 8]
+  imgsz_options: [256, 512, 640, 768, 1024]

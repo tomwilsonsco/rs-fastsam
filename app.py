@@ -6,9 +6,42 @@ from pathlib import Path
 import geopandas as gpd
 from ultralytics import FastSAM, SAM
 import pickle
+import yaml
+from pathlib import Path
 
 # internal class import
 from src.rssam import RasterSegmentor, classify_polygons
+
+
+# Load configuration
+@st.cache_data
+def load_config():
+    """Load configuration from YAML file."""
+    config_path = Path("config.yaml")
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+
+# Load config at startup
+config = load_config()
+
+# Page config using config values
+st.set_page_config(
+    page_title=config["app"]["title"],
+    layout=config["app"]["page_config"]["layout"],
+    initial_sidebar_state=config["app"]["page_config"]["initial_sidebar_state"],
+)
+
+# Source images from config
+SEGMENT_TIF_PATH = Path(config["data"]["segment_tif_path"])
+CLASSIFY_TIF_PATH = Path(config["data"]["classify_tif_path"])
+
+# Default values from config
+UPSCALE_DEFAULT = config["defaults"]["upscale"]
+SHARP_DEFAULT = config["defaults"]["sharp"]
+IMGSZ_DEFAULT = config["defaults"]["imgsz"]
+CONF_DEFAULT = config["defaults"]["conf"]
+IOU_DEFAULT = config["defaults"]["iou"]
 
 # Page config
 st.set_page_config(
@@ -25,6 +58,9 @@ st.title(" 🛰️Segment Sentinel-2 Imagery")
 with st.expander("❓ How to use"):
     st.markdown(
     """
+    See [the project's repository](https://github.com/tomwilsonsco/rs-fastsam) for full details.
+    
+    ##### Instructions for use:
     1. Zoom in on the area you wish to segment. You need to zoom to level 14 or 15 to generate segment predictions.
     2. (Optional) Use the draw marker / rectangle tools on the top left to place features on the map to target specific areas.
     3. Choose **FastSAM**, **MobileSAM**, **SAM2-t** from the sidebar.  
@@ -38,28 +74,14 @@ with st.expander("❓ How to use"):
     2. For individual feature predictions using markers, all models are typically fast.
     3. Rectangle drawings are for segmenting all features in a smaller extent.
     4. When drawing features, only features in the current display extent are used for the segmentations.
-    5. The classification of segment land use is a work in progress and no ground truth data has been used.
+    5. The classification of segment land use is very experimental. No ground truth data has been used.
+
+    ##### Credits:
+    Imagery: ESA Sentinel-2 | Models: SAM, FastSAM, MobileSAM, SAM2 | Implementation: Ultralytics.  
+    This app is for demonstration and research purposes only.
     """
     )
 
-# Source images
-SEGMENT_TIF_PATH = (
-    Path("data")
-    / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_8bit_clipped.tif"
-)
-
-CLASSIFY_TIF_PATH = (
-    Path("data")
-    / "S2C_20250516_latn563lonw0021_T30VWH_ORB080_20250516122950_compressed_downscaled.tif"
-)
-
-
-# Prediction parameter initial values
-UPSCALE_DEFAULT = 2
-SHARP_DEFAULT = 1.2
-IMGSZ_DEFAULT = 640
-CONF_DEFAULT = 0.3
-IOU_DEFAULT = 0.5
 
 # Initial session states
 if "initialized" not in st.session_state:
@@ -78,22 +100,26 @@ if "initialized" not in st.session_state:
 @st.cache_resource
 def load_model(model_name: str):
     """Load the specified model (cached)."""
+    model_paths = {
+        "FastSAM": config["models"]["fastsam_path"],
+        "MobileSAM": config["models"]["mobilesam_path"],
+        "SAM2-t": config["models"]["sam2_path"],
+    }
+
     if model_name == "FastSAM":
-        return FastSAM("models/FastSAM-x.pt")
+        return FastSAM(model_paths["FastSAM"])
     elif model_name == "MobileSAM":
-        return SAM("models/mobile_sam.pt")
+        return SAM(model_paths["MobileSAM"])
     elif model_name == "SAM2-t":
-        return SAM("models/sam2_s.pt")
+        return SAM(model_paths["SAM2-t"])
     else:
-        raise ValueError(
-            f"Invalid model name: {model_name}. Expected 'FastSAM', 'MobileSAM', or 'SAM2-t'."
-        )
+        raise ValueError(f"Invalid model name: {model_name}")
 
 
 # Load rf classifier for segment landuse classification
 @st.cache_resource
 def load_classifier():
-    with open(Path("clf_models") / "random_forest_classifer_20250710.pkl", "rb") as f:
+    with open(Path(config["models"]["classifier_path"]), "rb") as f:
         return pickle.load(f)
 
 
@@ -102,16 +128,18 @@ def create_map(center, zoom_val):
     Create a folium map with initial settings and return it.
     """
 
-    m = folium.Map(location=center, zoom_start=zoom_val, max_zoom=15)
+    m = folium.Map(
+        location=center, zoom_start=zoom_val, max_zoom=config["map"]["max_zoom"]
+    )
 
     folium.TileLayer(
-        tiles="https://tomwilsonsco.github.io/s2_tiles/tiles//{z}/{x}/{y}.png",
-        attr="Copernicus Sentinel-2 2025",
-        name="Sentinel 2 RGB 10m",
+        tiles=config["map"]["tiles"]["url"],
+        attr=config["map"]["tiles"]["attribution"],
+        name=config["map"]["tiles"]["name"],
         overlay=True,
         control=True,
         no_wrap=True,
-        max_zoom=15,
+        max_zoom=config["map"]["max_zoom"],
         detect_retina=False,
     ).add_to(m)
 
@@ -172,7 +200,7 @@ if st.session_state.get("out", False):
 with st.sidebar:
     st.selectbox(
         label="📊 Model to use",
-        options=("FastSAM", "MobileSAM", "SAM2-t"),
+        options=config["ui"]["model_options"],
         placeholder="FastSAM",
         key="model_name",
     )
@@ -182,7 +210,7 @@ with st.sidebar:
             st.session_state["no_masks"] = None
         st.selectbox(
             "Image upscaling",
-            (0, 2, 4, 8),
+            config["ui"]["upscale_options"],
             index=1,
             key="upscale",
             help="The upscaling factor applied to the image before it is segmented. \
@@ -201,7 +229,7 @@ with st.sidebar:
         )
         st.selectbox(
             "Input image size",
-            (256, 512, 640, 768, 1024),
+            config["ui"]["imgsz_options"],
             index=2,
             key="imgsz",
             help="The resolution to which the input image will be resized before processing.\
@@ -251,14 +279,14 @@ with st.sidebar:
             mime="application/geo+json",
             use_container_width=True,
         )
-        if st.session_state.get("out", False):
-            props = st.session_state["out"]
-            zoom = props["zoom"]
-            lat = props["center"]["lat"]
-            lng = props["center"]["lng"]
-            st.caption(f"Zoom Level: {zoom}")
-            st.caption(f"Centre: {lat:.3f}, {lng:.3f}")
-        
+    if st.session_state.get("out", False):
+        props = st.session_state["out"]
+        zoom = props["zoom"]
+        lat = props["center"]["lat"]
+        lng = props["center"]["lng"]
+        st.caption(f"Zoom Level: {zoom}")
+        st.caption(f"Centre: {lat:.3f}, {lng:.3f}")
+
         if not st.session_state["gdf"].empty:
             gdf = st.session_state["gdf"]
             total_area = float(gdf["geometry"].area.sum()) / 10000
@@ -272,7 +300,9 @@ with st.sidebar:
                     .reset_index()
                 )
                 for _, row in grouped_areas.iterrows():
-                    st.caption(f"- {row['predicted_class_desc']}: {row['geometry']:.2f} ha")
+                    st.caption(
+                        f"- {row['predicted_class_desc']}: {row['geometry']:.2f} ha"
+                    )
 
 
 # Run segmentations but check clean slate and zoomed in
@@ -340,10 +370,10 @@ if st.session_state.get("no_masks"):
 
 # Initial map positions
 if "zoom" not in st.session_state:
-    st.session_state["zoom"] = 14
+    st.session_state["zoom"] = config["map"]["default_zoom"]
 
 if "center" not in st.session_state:
-    st.session_state["center"] = [56.020, -2.754]
+    st.session_state["center"] = config["map"]["default_center"]
 
 
 # PREDICTIONS LAYER
