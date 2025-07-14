@@ -1,18 +1,30 @@
 # rs-fastsam
-Zero-shot satellite image segmentation using lightweight "Segment Anything" models.  
+A Streamlit app for zero-shot satellite image segmentation using lightweight variants of the Segment Anything Model (SAM), such as FastSAM and MobileSAM. 
 
-This experimental project demonstrates how segmentation models can be applied to Sentinel-2 imagery in Scotland. The approach performs best when segmenting features with distinct boundaries such as agricultural fields (see below), or inland water bodies.
+This experimental project demonstrates how pre-trained SAM-family models (e.g., FastSAM, MobileSAM) can be applied to Sentinel-2 imagery over Scotland. The method is most effective for segmenting features with clear visual boundaries, such as agricultural fields and inland water bodies.
 
 ![App Demo](static/demo.gif)
 
 
-Once an image is segmented, the segments can be converted into polygon features. These polygons identify boundaries on the ground and can serve as units for further analysis. In this simple demonstration, multispectral bands and derived indices are used to classify the land use of each segmented polygon.
+Once an image is segmented, the segments can be converted into polygon features. These polygons identify boundaries on the ground and can serve as units for further analysis. In the example included, multispectral bands and derived indices are used to classify the land use of each segmented polygon.
+
+## Live Demos
+
+- [Streamlit Cloud](https://rs-fastsam.streamlit.app) (free, but slower).
+- [Railway](https://rs-fastsam.up.railway.app) (costs me, but faster).
+
+## Models
+This repository uses FastSAM, MobileSAM, and a smaller variant of SAM2, via the Ultralytics implementation for simplified deployment. These models can generate predictions quickly using a CPU.
 
 ## Setup
 
-The default setup in this repository includes analysis images and a URL to a tile cache to visualise the imagery in Streamlit. 
+The default setup in this repository includes analysis images and a URL to a tile cache to visualise the imagery in the Streamlit interface. 
 
-`data/` includes two copies of a Sentinel 2 image from 16 May 2025. An 8-bit RGB version is used for the SAM-type segmentation. A downscaled 16 bit version including NIR, SWIR, red-edge bands is used for the post-segmentation land use classification.
+The `data/` directory includes two versions of a Sentinel-2 image captured on 16 May 2025:
+
+- An 8-bit RGB image used for SAM-based segmentation
+
+- A downsampled 16-bit multi-band image (including NIR, SWIR, and red-edge bands) used for post-segmentation land use classification
 
 ### Prerequisites
 
@@ -40,7 +52,7 @@ The default setup in this repository includes analysis images and a URL to a til
    - Update paths in `config.yaml` to match your local setup
 
 4. **Download required models**
-   - The app will automatically download models on first run
+   - The app will automatically download models from Ultralytics on the first run.
    - Or manually place model files in the `models/` directory as specified in `config.yaml`
 
 5. **Run the application**
@@ -65,7 +77,19 @@ The default setup in this repository includes analysis images and a URL to a til
 ### Configuration
 
 Edit `config.yaml` to change:
-- Analysis image paths
-- Map settings and tile cache url
-- Default model parameters
-- UI model parameter options
+- Paths to analysis imagery
+- Map display settings and tile cache URL
+- Default model inference parameters
+- User-selectable parameter options for the UI
+
+## Acknowledgments
+This project makes use of the following tools and datasets:
+
+- [Sentinel-2 imagery](https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-2) — © European Space Agency (ESA) / Copernicus Programme
+- [Segment Anything Model (SAM)](https://segment-anything.com/) — by Meta AI
+- [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM) — by CASIA-IVA-Lab
+- [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) — by Chaoning Zhang et al.
+- [SAM2](https://ai.meta.com/sam2/) — by Meta AI.
+- [Ultralytics](https://www.ultralytics.com/) — for model implementations and deployment utilities
+
+All trademarks, data, and code are the property of their respective owners and are used here for research and demonstration purposes.
