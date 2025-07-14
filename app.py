@@ -57,7 +57,10 @@ st.title(" 🛰️Segment Sentinel-2 Imagery")
 # Help guide
 with st.expander("❓ How to use"):
     st.markdown(
-        """
+    """
+    See [the project's repository](https://github.com/tomwilsonsco/rs-fastsam) for full details.
+    
+    ##### Instructions for use:
     1. Zoom in on the area you wish to segment. You need to zoom to level 14 or 15 to generate segment predictions.
     2. (Optional) Use the draw marker / rectangle tools on the top left to place features on the map to target specific areas.
     3. Choose **FastSAM**, **MobileSAM**, **SAM2-t** from the sidebar.  
@@ -71,7 +74,11 @@ with st.expander("❓ How to use"):
     2. For individual feature predictions using markers, all models are typically fast.
     3. Rectangle drawings are for segmenting all features in a smaller extent.
     4. When drawing features, only features in the current display extent are used for the segmentations.
-    5. The classification of segment land use is a work in progress and no ground truth data has been used.
+    5. The classification of segment land use is very experimental. No ground truth data has been used.
+
+    ##### Credits:
+    Imagery: ESA Sentinel-2 | Models: SAM, FastSAM, MobileSAM, SAM2 | Implementation: Ultralytics.  
+    This app is for demonstration and research purposes only.
     """
     )
 
@@ -272,13 +279,13 @@ with st.sidebar:
             mime="application/geo+json",
             use_container_width=True,
         )
-        if st.session_state.get("out", False):
-            props = st.session_state["out"]
-            zoom = props["zoom"]
-            lat = props["center"]["lat"]
-            lng = props["center"]["lng"]
-            st.caption(f"Zoom Level: {zoom}")
-            st.caption(f"Centre: {lat:.3f}, {lng:.3f}")
+    if st.session_state.get("out", False):
+        props = st.session_state["out"]
+        zoom = props["zoom"]
+        lat = props["center"]["lat"]
+        lng = props["center"]["lng"]
+        st.caption(f"Zoom Level: {zoom}")
+        st.caption(f"Centre: {lat:.3f}, {lng:.3f}")
 
         if not st.session_state["gdf"].empty:
             gdf = st.session_state["gdf"]
