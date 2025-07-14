@@ -14,11 +14,11 @@ Once an image is segmented, the segments can be converted into polygon features.
 - [Railway](https://rs-fastsam.up.railway.app) (costs me, but faster).
 
 ## Models
-This repository uses FastSAM, MobileSAM, and a scaled down variant of SAM2, via [Ultralytics]((https://www.ultralytics.com/) implementations for simplified deployment. These models can generate predictions quickly using a CPU.
+This repository uses FastSAM, MobileSAM, and a scaled down variant of SAM2, via [Ultralytics]((https://www.ultralytics.com/) implementations for simplified deployment. These models can generate predictions quickly using a CPU, no GPU required.
 
 ## Imagery
 
-The repository includes Copernicus [Sentinel 2](https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-2) images for analysis images and a URL to a tile cache to visualise same image in the Streamlit Folium map interface. 
+The repository includes Copernicus [Sentinel 2](https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-2) images for analysis and a URL to a tile cache to visualise same image in the Streamlit Folium map interface. 
 
 The `data/` directory includes two versions of a Sentinel-2 image captured on 16 May 2025:
 
