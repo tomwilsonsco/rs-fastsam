@@ -72,7 +72,7 @@ The `data/` directory includes two versions of a Sentinel-2 image captured on 16
 
 2. **Run the container**
    ```bash
-   docker run -p 8501:8080 rs-fastsam
+   docker run -p 8080:8080 rs-fastsam
    ```
 
 ### Configuration
