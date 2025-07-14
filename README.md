@@ -1,7 +1,7 @@
 # rs-fastsam
-A Streamlit app for zero-shot satellite image segmentation using lightweight variants of the Segment Anything Model (SAM), such as FastSAM and MobileSAM. 
+A Streamlit app demonstrating zero-shot satellite image segmentation using lightweight variants of the [Segment Anything Model (SAM)](https://segment-anything.com/), such as [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM) and [MobileSAM](https://github.com/ChaoningZhang/MobileSAM). 
 
-This experimental project demonstrates how pre-trained SAM-family models (e.g., FastSAM, MobileSAM) can be applied to Sentinel-2 imagery over Scotland. The method is most effective for segmenting features with clear visual boundaries, such as agricultural fields and inland water bodies.
+Experimental project to demonstrate how pre-trained SAM-family models (e.g., FastSAM, MobileSAM) can be applied to Sentinel-2 imagery over Scotland. The method is most effective for segmenting features with clear visual boundaries, such as agricultural fields and inland water bodies.
 
 ![App Demo](static/demo.gif)
 
@@ -14,11 +14,11 @@ Once an image is segmented, the segments can be converted into polygon features.
 - [Railway](https://rs-fastsam.up.railway.app) (costs me, but faster).
 
 ## Models
-This repository uses FastSAM, MobileSAM, and a smaller variant of SAM2, via the Ultralytics implementation for simplified deployment. These models can generate predictions quickly using a CPU.
+This repository uses FastSAM, MobileSAM, and a scaled down variant of SAM2, via [Ultralytics]((https://www.ultralytics.com/) implementations for simplified deployment. These models can generate predictions quickly using a CPU.
 
-## Setup
+## Imagery
 
-The default setup in this repository includes analysis images and a URL to a tile cache to visualise the imagery in the Streamlit interface. 
+The repository includes Copernicus [Sentinel 2](https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-2) images for analysis images and a URL to a tile cache to visualise same image in the Streamlit Folium map interface. 
 
 The `data/` directory includes two versions of a Sentinel-2 image captured on 16 May 2025:
 
@@ -26,6 +26,7 @@ The `data/` directory includes two versions of a Sentinel-2 image captured on 16
 
 - A downsampled 16-bit multi-band image (including NIR, SWIR, and red-edge bands) used for post-segmentation land use classification
 
+## Setup
 ### Prerequisites
 
 - Python 3.12+
