@@ -31,6 +31,7 @@ class RasterSegmentor:
         conf: float = 0.2,
         iou: float = 0.5,
         min_area: float = 2000.0,
+        max_proportion: float = 0.5,
     ):
         self.tif_path = tif_path
         self.features = features
@@ -41,6 +42,7 @@ class RasterSegmentor:
         self.conf = conf
         self.iou = iou
         self.min_area = min_area
+        self.max_proportion = max_proportion
 
         with rio.open(self.tif_path) as f:
             self.crs = f.crs
@@ -145,7 +147,7 @@ class RasterSegmentor:
         gdf = gdf[gdf.is_valid]
         gdf["area"] = gdf.area
         # Remove frame type features
-        gdf = gdf[(gdf.area / box_area < 0.9)]
+        gdf = gdf[(gdf.area / box_area < self.max_proportion)]
 
         # Removes overlapping polygons while preserving internal boundaries
         gdf = planar_union(gdf)
@@ -181,6 +183,7 @@ class RasterSegmentor:
             gpd.GeoDataFrame: GeoDataFrame containing all valid polygons from the segmented boxes.
         """
         gdfs = []
+        self.max_proportion = 0.9 # make this a higher threshold for boxes (0.5 for whole extent)
         for _, b in boxes_gdf.iterrows():
             b = gpd.GeoDataFrame([b], crs=boxes_gdf.crs)
             box_area = b.geometry.area.sum()
