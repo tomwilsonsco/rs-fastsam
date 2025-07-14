@@ -1,5 +1,12 @@
 # rs-fastsam
-Zero-shot satellite image segmentation using lightweight "Segment Anything" models.
+Zero-shot satellite image segmentation using lightweight "Segment Anything" models.  
+
+This experimental project demonstrates how segmentation models can be applied to Sentinel-2 imagery in Scotland. The approach performs best when segmenting features with distinct boundaries such as agricultural fields (see below), or inland water bodies.
+
+![App Demo](static/demo.gif)
+
+
+Once an image is segmented, the segments can be converted into polygon features. These polygons identify boundaries on the ground and can serve as units for further analysis. In this simple demonstration, multispectral bands and derived indices are used to classify the land use of each segmented polygon.
 
 ## Setup
 
