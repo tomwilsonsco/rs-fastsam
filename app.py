@@ -58,7 +58,9 @@ st.title(" 🛰️Segment Sentinel-2 Imagery")
 with st.expander("❓ How to use"):
     st.markdown(
     """
-    See [the project's repository](https://github.com/tomwilsonsco/rs-fastsam) for full details.
+    See [the project's repository](https://github.com/tomwilsonsco/rs-fastsam) for full details. 
+    Image date 16 May 2025 ([Sentinel-2](https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-2) 
+    © European Space Agency (ESA) / Copernicus Programme).
     
     ##### Instructions for use:
     1. Zoom in on the area you wish to segment. You need to zoom to level 14 or 15 to generate segment predictions.
@@ -77,7 +79,12 @@ with st.expander("❓ How to use"):
     5. The classification of segment land use is very experimental. No ground truth data has been used.
 
     ##### Credits:
-    Imagery: ESA Sentinel-2 | Models: SAM, FastSAM, MobileSAM, SAM2 | Implementation: Ultralytics.  
+    Imagery: ESA Sentinel-2 | Models: 
+    [SAM](https://segment-anything.com/), 
+    [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM), 
+    [MobileSAM](https://github.com/ChaoningZhang/MobileSAM), 
+    [SAM2](https://ai.meta.com/sam2/) | 
+    Implementation: [Ultralytics](https://www.ultralytics.com/).  
     This app is for demonstration and research purposes only.
     """
     )
