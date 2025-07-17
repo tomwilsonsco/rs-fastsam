@@ -72,7 +72,7 @@ with st.expander("❓ How to use"):
     7. Delete or adjust drawings and pan to a new extent and create more segmentations as needed.
 
     ##### Tips:
-    1. For extent predictions FastSAM is quicker, but MobileSAM can produce better quality segmentations.
+    1. For extent predictions FastSAM is quicker, but MobileSAM or SAM2-t can produce better quality segmentations.
     2. For individual feature predictions using markers, all models are typically fast.
     3. Rectangle drawings are for segmenting all features in a smaller extent.
     4. When drawing features, only features in the current display extent are used for the segmentations.
