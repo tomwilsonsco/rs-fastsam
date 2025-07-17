@@ -183,7 +183,9 @@ class RasterSegmentor:
             gpd.GeoDataFrame: GeoDataFrame containing all valid polygons from the segmented boxes.
         """
         gdfs = []
-        self.max_proportion = 0.9 # make this a higher threshold for boxes (0.5 for whole extent)
+        self.max_proportion = (
+            0.9  # make this a higher threshold for boxes (0.5 for whole extent)
+        )
         for _, b in boxes_gdf.iterrows():
             b = gpd.GeoDataFrame([b], crs=boxes_gdf.crs)
             box_area = b.geometry.area.sum()
