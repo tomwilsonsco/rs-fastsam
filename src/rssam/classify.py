@@ -6,6 +6,42 @@ from pathlib import Path
 import geopandas as gpd
 from sklearn.ensemble import RandomForestClassifier
 
+def clip_and_normalize(X: np.ndarray) -> np.ndarray:
+    """
+    Clip and normalize spectral bands to their expected ranges.
+    
+    Args:
+        X (numpy.ndarray): A 2D array where rows represent pixels and columns represent
+            the 7 bands in the order ('Blue', 'Green', 'Red', 'RE_B6', 'NIR_B8', 'SWIR1', 'SWIR2').
+    
+    Returns:
+        numpy.ndarray: A 2D array with clipped and normalized bands.
+    """
+    X = X.astype("float32")
+    
+    # Define clipping ranges for each band
+    clip_ranges = [
+        (0, 200),  # Blue
+        (0, 200),  # Green  
+        (0, 200),  # Red
+        (0, 600),  # RE_B6
+        (0, 600),  # NIR_B8
+        (0, 400),  # SWIR1
+        (0, 400),  # SWIR2
+    ]
+    
+    # Apply clipping and normalization to each band
+    X_normalized = np.zeros_like(X)
+    
+    for i, (min_val, max_val) in enumerate(clip_ranges):
+        # Clip values to specified range
+        X_clipped = np.clip(X[:, i], min_val, max_val)
+        
+        # Min-max normalize to [0, 1]
+        X_normalized[:, i] = (X_clipped - min_val) / (max_val - min_val)
+    
+    return X_normalized
+
 
 def calculate_indices(X: np.ndarray) -> np.ndarray:
     """
@@ -20,9 +56,11 @@ def calculate_indices(X: np.ndarray) -> np.ndarray:
     """
     X = X.astype("float32")
 
+    X_normalised = clip_and_normalize(X)
+
     # epsilon to avoid division by zero
     epsilon = 1e-8
-    X_safe = X + epsilon
+    X_safe = X_normalised + epsilon
 
     ndvi = (X_safe[:, 4] - X_safe[:, 2]) / (X_safe[:, 4] + X_safe[:, 2])
     ndwi = (X_safe[:, 4] - X_safe[:, 5]) / (X_safe[:, 4] + X_safe[:, 5])
