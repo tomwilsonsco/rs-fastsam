@@ -13,7 +13,7 @@ models:
   fastsam_path: "models/FastSAM-x.pt"
   mobilesam_path: "models/mobile_sam.pt"
   sam2_path: "models/sam2_s.pt"
-  classifier_path: "clf_models/random_forest_classifer_20250710.pkl"
+  classifier_path: "clf_models/random_forest_classifer_20250717.pkl"
 
 map:
   max_zoom: 15
