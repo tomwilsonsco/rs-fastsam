@@ -57,7 +57,7 @@ st.title(" 🛰️Segment Sentinel-2 Imagery")
 # Help guide
 with st.expander("❓ How to use"):
     st.markdown(
-    """
+        """
     See [the project's repository](https://github.com/tomwilsonsco/rs-fastsam) for full details. 
     Image date 16 May 2025 ([Sentinel-2](https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-2) 
     © European Space Agency (ESA) / Copernicus Programme).
