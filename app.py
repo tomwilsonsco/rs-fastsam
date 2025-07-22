@@ -452,5 +452,5 @@ out = st_folium(
     key="out",
     use_container_width=True,
     pixelated=False,
-    height=600,
+    height=550,
 )
