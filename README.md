@@ -14,7 +14,7 @@ Once an image is segmented, the segments can be converted into polygon features.
 - [Railway](https://rs-fastsam.up.railway.app) (costs me, but faster).
 
 ## Models
-This repository uses FastSAM, MobileSAM, and a scaled down variant of SAM2, via [Ultralytics]((https://www.ultralytics.com/) implementations for simplified deployment. These models can generate predictions quickly using a CPU, no GPU required.
+This repository uses FastSAM, MobileSAM, and a scaled down variant of SAM2, via [Ultralytics](https://www.ultralytics.com/) implementations for simplified deployment. These models can generate predictions quickly using a CPU, no GPU required.
 
 ## Imagery
 
@@ -77,7 +77,7 @@ The `data/` directory includes two versions of a Sentinel-2 image captured on 16
 
 ### Configuration
 
-Edit `config.yaml` to change:
+By editing `config.yaml` can change:
 - Paths to analysis imagery
 - Map display settings and tile cache URL
 - Default model inference parameters
@@ -86,11 +86,11 @@ Edit `config.yaml` to change:
 ## Acknowledgments
 This project makes use of the following tools and datasets:
 
-- [Sentinel-2 imagery](https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-2) — © European Space Agency (ESA) / Copernicus Programme
-- [Segment Anything Model (SAM)](https://segment-anything.com/) — by Meta AI
-- [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM) — by CASIA-IVA-Lab
-- [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) — by Chaoning Zhang et al.
-- [SAM2](https://ai.meta.com/sam2/) — by Meta AI.
-- [Ultralytics](https://www.ultralytics.com/) — for model implementations and deployment utilities
+- [Sentinel-2 imagery](https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-2) - © European Space Agency (ESA) / Copernicus Programme
+- [Segment Anything Model (SAM)](https://segment-anything.com/) - by Meta AI
+- [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM) - by CASIA-IVA-Lab
+- [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) - by Chaoning Zhang et al.
+- [SAM2](https://ai.meta.com/sam2/) - by Meta AI.
+- [Ultralytics](https://www.ultralytics.com/) - for model implementations and deployment utilities
 
 All trademarks, data, and code are the property of their respective owners and are used here for research and demonstration purposes.
